@@ -15,6 +15,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import sys
 from pathlib import Path
@@ -86,17 +87,10 @@ def run_features(parquet_path: str, cfg) -> tuple[str, str]:
 
 
 def run_tune(processed_dir: str, model_name: str, n_trials: int, cfg) -> dict:
-    import polars as pl
-
     from loan_risk.data.splits import DataSplits
     from loan_risk.tuning.search import run_hyperparameter_search
 
-    path = Path(processed_dir)
-    splits = DataSplits(
-        train=pl.read_parquet(path / "train.parquet"),
-        val=pl.read_parquet(path / "val.parquet"),
-        test=pl.read_parquet(path / "test.parquet"),
-    )
+    splits = DataSplits.from_dir(processed_dir)
 
     best_params = run_hyperparameter_search(
         splits=splits,
@@ -108,17 +102,10 @@ def run_tune(processed_dir: str, model_name: str, n_trials: int, cfg) -> dict:
 
 
 def run_train(processed_dir: str, model_name: str, best_params: dict, cfg):
-    import polars as pl
-
     from loan_risk.data.splits import DataSplits
     from loan_risk.training.trainer import ModelTrainer
 
-    path = Path(processed_dir)
-    splits = DataSplits(
-        train=pl.read_parquet(path / "train.parquet"),
-        val=pl.read_parquet(path / "val.parquet"),
-        test=pl.read_parquet(path / "test.parquet"),
-    )
+    splits = DataSplits.from_dir(processed_dir)
 
     trainer = ModelTrainer()
     result = trainer.fit(splits=splits, model_name=model_name, best_params=best_params)
@@ -128,7 +115,6 @@ def run_train(processed_dir: str, model_name: str, best_params: dict, cfg):
     # Save result for downstream stages (DVC evaluate stage)
     result_path = Path("artifacts/last_training_result.json")
     result_path.parent.mkdir(exist_ok=True)
-    import dataclasses
     result_path.write_text(json.dumps(dataclasses.asdict(result), indent=2))
 
     return result
@@ -183,13 +169,14 @@ def run_monitor(cfg) -> None:
     from loan_risk.monitoring.drift import generate_drift_report
 
     ref_path = Path(cfg.monitoring.reference_data_path)
-    cur_path = Path(cfg.monitoring.prediction_log_path)
+    # Use test split as current-window features (same schema as reference)
+    cur_path = Path(cfg.data.processed_dir) / "test.parquet"
 
     if not ref_path.exists():
         print(f"[monitor] Reference data not found: {ref_path}")
         return
     if not cur_path.exists():
-        print(f"[monitor] Current data not found: {cur_path}")
+        print(f"[monitor] Current feature data not found: {cur_path}. Run --stage features first.")
         return
 
     ref_df = pl.read_parquet(ref_path)
@@ -244,6 +231,8 @@ def main() -> int:
         if param_file.exists():
             with open(param_file) as f:
                 best_params = json.load(f).get("best_params", {})
+        else:
+            print(f"[tune] --skip-tuning: no saved params at {param_file}, using model defaults")
 
     training_result = None
     if args.stage in ("all", "train"):

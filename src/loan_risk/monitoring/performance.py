@@ -6,6 +6,7 @@ When labels arrive, this module computes live AUC against logged predictions.
 
 from __future__ import annotations
 
+import datetime
 from pathlib import Path
 from typing import Any
 
@@ -37,8 +38,6 @@ def log_prediction(
         request_id: Request trace ID.
         timestamp: ISO timestamp (auto-generated if None).
     """
-    import datetime
-
     cfg = get_settings()
     log_path = Path(cfg.monitoring.prediction_log_path)
     log_path.parent.mkdir(parents=True, exist_ok=True)

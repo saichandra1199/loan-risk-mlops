@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import lightgbm as lgb
 import numpy as np
 import optuna
 from sklearn.metrics import roc_auc_score
@@ -56,7 +57,6 @@ def lgbm_objective(
         random_seed=random_seed,
     )
 
-    import lightgbm as lgb
     model.fit(
         X_train,
         y_train,

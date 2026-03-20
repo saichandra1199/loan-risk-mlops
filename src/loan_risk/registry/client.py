@@ -93,11 +93,11 @@ class MLflowRegistryClient:
         )
         return version
 
-    def get_champion_model(self) -> Any:
+    def get_champion_model(self) -> tuple[Any, str]:
         """Load the current champion model from the registry.
 
         Returns:
-            Loaded sklearn-compatible model.
+            Tuple of (loaded sklearn-compatible model, version string).
 
         Raises:
             ModelNotFoundError: If no champion model exists.
@@ -106,8 +106,10 @@ class MLflowRegistryClient:
         try:
             model_uri = f"models:/{self._model_name}@{alias}"
             model = mlflow.sklearn.load_model(model_uri)
-            logger.info("champion_model_loaded", alias=alias, model_name=self._model_name)
-            return model
+            mv = self._client.get_model_version_by_alias(self._model_name, alias)
+            version = str(mv.version)
+            logger.info("champion_model_loaded", alias=alias, model_name=self._model_name, version=version)
+            return model, version
         except Exception as exc:
             raise ModelNotFoundError(self._model_name, version=f"@{alias}") from exc
 
@@ -125,15 +127,3 @@ class MLflowRegistryClient:
             for mv in versions
         ]
 
-    def get_version_info(self, version: str) -> dict[str, Any]:
-        """Get details for a specific model version."""
-        try:
-            mv = self._client.get_model_version(name=self._model_name, version=version)
-            return {
-                "version": mv.version,
-                "run_id": mv.run_id,
-                "status": mv.status,
-                "tags": mv.tags,
-            }
-        except Exception as exc:
-            raise ModelNotFoundError(self._model_name, version=version) from exc

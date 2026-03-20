@@ -56,33 +56,3 @@ def load_raw_data(path: str | Path) -> pl.DataFrame:
         columns=df.columns,
     )
     return df
-
-
-def load_data_dir(directory: str | Path, glob_pattern: str = "*.parquet") -> pl.DataFrame:
-    """Load and concatenate all matching files from a directory.
-
-    Args:
-        directory: Directory to scan for data files.
-        glob_pattern: File pattern to match (default: *.parquet).
-
-    Returns:
-        Concatenated Polars DataFrame.
-
-    Raises:
-        DataIngestionError: If no files found or concatenation fails.
-    """
-    directory = Path(directory)
-    files = sorted(directory.glob(glob_pattern))
-
-    if not files:
-        raise DataIngestionError(
-            f"No files matching '{glob_pattern}' in {directory}"
-        )
-
-    logger.info("loading_directory", directory=str(directory), n_files=len(files))
-
-    frames = [load_raw_data(f) for f in files]
-    combined = pl.concat(frames, how="diagonal")
-
-    logger.info("directory_loaded", n_rows=len(combined), n_files=len(files))
-    return combined

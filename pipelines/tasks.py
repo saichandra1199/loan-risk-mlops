@@ -6,6 +6,7 @@ and emits structured logs for Prefect UI visibility.
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 from typing import Any
 
@@ -136,20 +137,13 @@ def tune_hyperparameters_task(
     Returns:
         Best hyperparameters dict.
     """
-    import polars as pl
-
     from loan_risk.config import get_settings
     from loan_risk.data.splits import DataSplits
     from loan_risk.tuning.search import run_hyperparameter_search
 
     cfg = get_settings()
-    processed_path = Path(processed_dir)
 
-    splits = DataSplits(
-        train=pl.read_parquet(processed_path / "train.parquet"),
-        val=pl.read_parquet(processed_path / "val.parquet"),
-        test=pl.read_parquet(processed_path / "test.parquet"),
-    )
+    splits = DataSplits.from_dir(processed_dir)
 
     best_params = run_hyperparameter_search(
         splits=splits,
@@ -177,22 +171,13 @@ def train_model_task(
     Returns:
         TrainingResult serialised as dict.
     """
-    import dataclasses
-
-    import polars as pl
-
     from loan_risk.config import get_settings
     from loan_risk.data.splits import DataSplits
     from loan_risk.training.trainer import ModelTrainer
 
     cfg = get_settings()
-    processed_path = Path(processed_dir)
 
-    splits = DataSplits(
-        train=pl.read_parquet(processed_path / "train.parquet"),
-        val=pl.read_parquet(processed_path / "val.parquet"),
-        test=pl.read_parquet(processed_path / "test.parquet"),
-    )
+    splits = DataSplits.from_dir(processed_dir)
 
     trainer = ModelTrainer()
     result = trainer.fit(

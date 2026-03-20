@@ -50,13 +50,11 @@ def generate_drift_report(
     target_col = cfg.data.target_column
     id_col = cfg.data.id_column
 
-    ref_pd = reference_df.drop(
-        [c for c in [id_col] if c in reference_df.columns]
-    ).to_pandas()
+    ref_cols_to_drop = [id_col] if id_col in reference_df.columns else []
+    ref_pd = reference_df.drop(ref_cols_to_drop).to_pandas()
 
-    cur_pd = current_df.drop(
-        [c for c in [id_col] if c in current_df.columns]
-    ).to_pandas()
+    cur_cols_to_drop = [id_col] if id_col in current_df.columns else []
+    cur_pd = current_df.drop(cur_cols_to_drop).to_pandas()
 
     if column_mapping is None:
         # Auto-detect categorical columns

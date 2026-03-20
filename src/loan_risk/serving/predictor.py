@@ -9,6 +9,7 @@ The predictor handles:
 
 from __future__ import annotations
 
+import datetime
 import time
 from typing import Any
 
@@ -21,6 +22,7 @@ from loan_risk.evaluation.explainability import get_top_shap_factors
 from loan_risk.exceptions import PredictionError
 from loan_risk.features.pipeline import build_feature_pipeline, load_pipeline
 from loan_risk.logging_setup import get_logger
+from loan_risk.monitoring.performance import log_prediction
 from loan_risk.registry.client import MLflowRegistryClient
 from loan_risk.serving.schemas import (
     LoanApplicationRequest,
@@ -67,7 +69,7 @@ class ModelPredictor:
         logger.info("loading_model", alias=self.cfg.serving.model_alias)
 
         registry = MLflowRegistryClient()
-        self._model = registry.get_champion_model()
+        self._model, self._model_version = registry.get_champion_model()
 
         # Try loading persisted pipeline; fall back to building a new one
         pipeline_path = "artifacts/preprocessor.pkl"
@@ -129,9 +131,7 @@ class ModelPredictor:
 
             # Predict
             prob = float(self._model.predict_proba(X)[0, 1])
-            threshold = getattr(self._model, "_threshold", self.cfg.serving.__dict__.get("threshold", 0.5))
-            if not isinstance(threshold, float):
-                threshold = 0.5
+            threshold = getattr(self._model, "_threshold", 0.5)
 
             decision = "REJECT" if prob >= threshold else "APPROVE"
             confidence = compute_confidence(prob)
@@ -155,6 +155,18 @@ class ModelPredictor:
             PREDICTION_COUNTER.labels(prediction=decision, risk_tier=risk_tier).inc()
             PREDICTION_LATENCY.observe(latency_ms / 1000)
             DEFAULT_PROBABILITY.observe(prob)
+
+            # Log prediction for live AUC monitoring (best-effort)
+            try:
+                log_prediction(
+                    loan_id=request_id,
+                    default_probability=prob,
+                    model_version=self._model_version,
+                    request_id=request_id,
+                    timestamp=datetime.datetime.utcnow().isoformat(),
+                )
+            except Exception:
+                pass
 
             return PredictionResponse(
                 prediction=decision,

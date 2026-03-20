@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import polars as pl
 from sklearn.model_selection import train_test_split
@@ -19,6 +20,16 @@ class DataSplits:
     train: pl.DataFrame
     val: pl.DataFrame
     test: pl.DataFrame
+
+    @classmethod
+    def from_dir(cls, directory: str | Path) -> DataSplits:
+        """Load train/val/test splits from a directory of Parquet files."""
+        path = Path(directory)
+        return cls(
+            train=pl.read_parquet(path / "train.parquet"),
+            val=pl.read_parquet(path / "val.parquet"),
+            test=pl.read_parquet(path / "test.parquet"),
+        )
 
     @property
     def target_column(self) -> str:
