@@ -1,0 +1,41 @@
+mlflow:
+  tracking_uri: "http://localhost:5000"
+  experiment_name: "loan-risk"
+  registered_model_name: "loan-risk-classifier"
+
+model:
+  name: "lgbm"  # lgbm | xgboost | catboost
+  promotion_auc_threshold: 0.80
+
+training:
+  test_size: 0.20
+  val_size: 0.10
+  n_trials: 100
+  random_seed: 42
+  early_stopping_rounds: 50
+
+serving:
+  port: 8000
+  model_alias: "champion"
+  max_batch_size: 100
+
+monitoring:
+  drift_psi_threshold: 0.15
+  drift_ks_pvalue_threshold: 0.05
+  performance_auc_threshold: 0.75
+  reference_data_path: "data/reference/reference.parquet"
+  prediction_log_path: "data/monitoring/predictions.parquet"
+
+data:
+  raw_dir: "data/raw"
+  processed_dir: "data/processed"
+  target_column: "loan_default"
+  id_column: "loan_id"
+
+features:
+  credit_score_bins: [300, 580, 670, 740, 800, 850]
+  credit_score_labels: ["Poor", "Fair", "Good", "Very Good", "Exceptional"]
+  max_dti_ratio: 1.0
+  log_transform_columns:
+    - "annual_income"
+    - "loan_amount"

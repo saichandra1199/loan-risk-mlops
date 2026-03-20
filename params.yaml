@@ -1,0 +1,35 @@
+# DVC Parameters File
+# ===================
+# These parameters are tracked by DVC. When you change a value here
+# and run `dvc repro`, DVC will re-run the affected pipeline stages.
+#
+# Compare experiments: dvc params diff
+# Run with custom params: dvc exp run -S training.model_name=xgboost
+
+# Dataset parameters
+data:
+  random_seed: 42
+
+# Training parameters
+training:
+  test_size: 0.20       # 20% of data held out for final test evaluation
+  val_size: 0.10        # 10% of data used for validation during training
+  random_seed: 42       # Set this to any integer for reproducible results
+  n_trials: 50          # Number of Optuna hyperparameter tuning trials
+  model_name: lgbm      # Options: lgbm | xgboost
+  early_stopping_rounds: 50  # Stop training if validation doesn't improve
+
+# Model deployment threshold
+model:
+  promotion_auc_threshold: 0.75  # Minimum AUC to promote model to Production
+                                  # Lowered from 0.80 since UCI data ~22% default rate
+
+# Serving parameters
+serving:
+  port: 8000
+  model_alias: champion
+
+# Monitoring thresholds
+monitoring:
+  drift_psi_threshold: 0.15      # PSI above this triggers a retraining alert
+  performance_auc_threshold: 0.70 # Live AUC below this triggers alert

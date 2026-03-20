@@ -1,0 +1,184 @@
+"""Evidently-based data drift detection.
+
+Generates HTML drift reports and structured drift metrics
+comparing a reference dataset against current production data.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
+import polars as pl
+
+from loan_risk.config import get_settings
+from loan_risk.exceptions import MonitoringError
+from loan_risk.logging_setup import get_logger
+
+logger = get_logger(__name__)
+
+
+def generate_drift_report(
+    reference_df: pl.DataFrame,
+    current_df: pl.DataFrame,
+    output_path: str = "reports/monitoring/drift_report.html",
+    column_mapping: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Generate Evidently drift report comparing reference vs. current data.
+
+    Args:
+        reference_df: Baseline reference dataset (e.g., training data).
+        current_df: Current production data window.
+        output_path: Path to save the HTML report.
+        column_mapping: Optional Evidently ColumnMapping for target/feature hints.
+
+    Returns:
+        Dict with drift summary: dataset_drift, drifted_columns, share_of_drifted_columns.
+
+    Raises:
+        MonitoringError: If the report cannot be generated.
+    """
+    try:
+        from evidently import ColumnMapping
+        from evidently.metric_preset import DataDriftPreset
+        from evidently.report import Report
+    except ImportError as exc:
+        raise MonitoringError("Evidently not installed. Run: pip install evidently") from exc
+
+    cfg = get_settings()
+    target_col = cfg.data.target_column
+    id_col = cfg.data.id_column
+
+    ref_pd = reference_df.drop(
+        [c for c in [id_col] if c in reference_df.columns]
+    ).to_pandas()
+
+    cur_pd = current_df.drop(
+        [c for c in [id_col] if c in current_df.columns]
+    ).to_pandas()
+
+    if column_mapping is None:
+        # Auto-detect categorical columns
+        cat_cols = [
+            c for c in ref_pd.columns
+            if ref_pd[c].dtype == object and c != target_col
+        ]
+        column_mapping = ColumnMapping(
+            target=target_col if target_col in ref_pd.columns else None,
+            categorical_features=cat_cols,
+        )
+
+    report = Report(metrics=[DataDriftPreset()])
+    report.run(reference_data=ref_pd, current_data=cur_pd, column_mapping=column_mapping)
+
+    output_path_obj = Path(output_path)
+    output_path_obj.parent.mkdir(parents=True, exist_ok=True)
+    report.save_html(str(output_path_obj))
+
+    # Extract structured summary
+    report_dict = report.as_dict()
+    drift_summary = _extract_drift_summary(report_dict)
+
+    logger.info(
+        "drift_report_generated",
+        output_path=output_path,
+        dataset_drift=drift_summary.get("dataset_drift"),
+        drifted_columns=drift_summary.get("drifted_columns"),
+    )
+
+    return drift_summary
+
+
+def _extract_drift_summary(report_dict: dict[str, Any]) -> dict[str, Any]:
+    """Pull key metrics out of the Evidently report dict."""
+    try:
+        metrics = report_dict.get("metrics", [])
+        for metric in metrics:
+            if "DatasetDriftMetric" in metric.get("metric", ""):
+                result = metric.get("result", {})
+                return {
+                    "dataset_drift": result.get("dataset_drift", False),
+                    "drifted_columns": result.get("number_of_drifted_columns", 0),
+                    "share_of_drifted_columns": result.get("share_of_drifted_columns", 0.0),
+                    "n_features_tested": result.get("number_of_columns", 0),
+                }
+    except Exception as exc:
+        logger.warning("drift_summary_extraction_failed", error=str(exc))
+
+    return {
+        "dataset_drift": False,
+        "drifted_columns": 0,
+        "share_of_drifted_columns": 0.0,
+        "n_features_tested": 0,
+    }
+
+
+def compute_psi(
+    reference: pd.Series,
+    current: pd.Series,
+    n_bins: int = 10,
+) -> float:
+    """Compute Population Stability Index (PSI) between two distributions.
+
+    PSI < 0.10: No significant change
+    PSI 0.10–0.20: Moderate change, monitor
+    PSI > 0.20: Significant change, investigate
+
+    Args:
+        reference: Reference distribution (baseline).
+        current: Current distribution.
+        n_bins: Number of bins for histogram.
+
+    Returns:
+        PSI value (float, non-negative).
+    """
+    import numpy as np
+
+    # Build bins on reference, apply to both
+    bins = np.linspace(
+        min(reference.min(), current.min()),
+        max(reference.max(), current.max()),
+        n_bins + 1,
+    )
+
+    ref_counts, _ = np.histogram(reference, bins=bins)
+    cur_counts, _ = np.histogram(current, bins=bins)
+
+    # Avoid division by zero / log(0)
+    ref_pct = (ref_counts + 0.0001) / (len(reference) + 0.0001 * n_bins)
+    cur_pct = (cur_counts + 0.0001) / (len(current) + 0.0001 * n_bins)
+
+    psi = float(np.sum((cur_pct - ref_pct) * np.log(cur_pct / ref_pct)))
+    return max(0.0, psi)
+
+
+def compute_feature_psi_all(
+    reference_df: pl.DataFrame,
+    current_df: pl.DataFrame,
+    numeric_features: list[str] | None = None,
+) -> dict[str, float]:
+    """Compute PSI for all numeric features.
+
+    Args:
+        reference_df: Reference Polars DataFrame.
+        current_df: Current Polars DataFrame.
+        numeric_features: Feature names to compute PSI for.
+
+    Returns:
+        Dict mapping feature name -> PSI value.
+    """
+    if numeric_features is None:
+        from loan_risk.features.definitions import NUMERIC_FEATURES
+        numeric_features = NUMERIC_FEATURES
+
+    ref_pd = reference_df.to_pandas()
+    cur_pd = current_df.to_pandas()
+
+    psi_values: dict[str, float] = {}
+    for feature in numeric_features:
+        if feature in ref_pd.columns and feature in cur_pd.columns:
+            psi = compute_psi(ref_pd[feature].dropna(), cur_pd[feature].dropna())
+            psi_values[feature] = round(psi, 4)
+
+    return psi_values

@@ -1,0 +1,35 @@
+# DVC Ignore File
+# ===============
+# Files and directories that DVC should not track.
+# Syntax is the same as .gitignore.
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Test outputs
+.pytest_cache/
+htmlcov/
+
+# IDE files
+.idea/
+.vscode/
+
+# macOS
+.DS_Store
+
+# MLflow local runs (large, not useful to cache)
+mlruns/
+mlartifacts/
+
+# Optuna study database
+optuna.db
+
+# Development artifacts
+*.egg-info/
+dist/
+build/

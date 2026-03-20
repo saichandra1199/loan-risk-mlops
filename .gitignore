@@ -1,0 +1,72 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Environment
+.env
+!.env.example
+
+# uv
+uv.lock
+
+# MLflow
+mlruns/
+mlartifacts/
+
+# DVC — these dirs are managed by DVC, not git directly
+# DVC creates its own .gitignore inside these dirs
+.dvc/tmp/
+.dvc/cache/
+/data/raw/*.csv
+/data/raw/*.parquet
+/data/processed/
+/data/reference/
+/data/monitoring/
+
+# Pipeline outputs (tracked by DVC)
+/artifacts/preprocessor*.pkl
+/artifacts/best_params/*.json
+/artifacts/last_training_result.json
+
+# Reports (generated, not source code)
+/reports/evaluation/*.json
+/reports/monitoring/*.html
+/reports/validation/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Claude Code local settings
+.claude/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Prefect
+.prefect/
+
+# Optuna
+optuna.db

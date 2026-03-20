@@ -1,0 +1,27 @@
+drift:
+  psi:
+    warning: 0.10
+    critical: 0.20
+  ks_test:
+    warning_pvalue: 0.10
+    critical_pvalue: 0.05
+  prediction_distribution:
+    max_shift: 0.15
+
+performance:
+  auc_roc:
+    warning: 0.78
+    critical: 0.72
+  f1_score:
+    warning: 0.60
+    critical: 0.50
+
+data_quality:
+  max_null_rate: 0.05
+  max_outlier_rate: 0.10
+
+retraining:
+  trigger_on_drift: true
+  trigger_on_performance_degradation: true
+  min_samples_for_retrain: 1000
+  cooldown_hours: 24

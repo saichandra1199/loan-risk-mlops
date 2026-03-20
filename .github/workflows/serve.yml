@@ -1,0 +1,40 @@
+# Model Serving Workflow
+# ======================
+# Builds and tests the FastAPI prediction server.
+# Runs on pushes that touch the serving code.
+
+name: Test Serving Layer
+
+on:
+  push:
+    paths:
+      - "src/loan_risk/serving/**"
+      - "tests/integration/test_api.py"
+      - ".github/workflows/serve.yml"
+  pull_request:
+    paths:
+      - "src/loan_risk/serving/**"
+      - "tests/integration/test_api.py"
+
+jobs:
+  test-api:
+    name: FastAPI Integration Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Run API integration tests
+        env:
+          MLFLOW_TRACKING_URI: "sqlite:///mlruns.db"
+          PYTHONPATH: "src"
+        run: |
+          uv run pytest tests/integration/test_api.py -v --tb=short

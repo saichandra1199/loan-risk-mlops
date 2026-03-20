@@ -1,0 +1,111 @@
+# Continuous Integration Workflow
+# ================================
+# This workflow runs on every push and pull request.
+# It checks that:
+#   1. The code follows style guidelines (ruff linter)
+#   2. All unit tests pass
+#
+# It runs WITHOUT needing Docker, MLflow server, or any cloud services.
+# MLflow uses a local SQLite file instead of a real server.
+#
+# When does this run?
+#   - Every time you push code to any branch
+#   - Every time you open or update a pull request
+
+name: CI — Lint & Unit Tests
+
+on:
+  push:
+    branches: ["**"]      # Run on ALL branches
+  pull_request:
+    branches: [main, develop]
+
+# Cancel any running job for the same branch when a new push arrives
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-test:
+    name: Lint & Unit Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11"]   # Primary version; add "3.12" to test both
+
+    steps:
+      # Step 1: Download the code from GitHub
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Step 2: Set up the Python version we want to use
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # Step 3: Install uv (the fast Python package manager)
+      # uv is 10-100x faster than pip for installing packages
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+          enable-cache: true      # Cache the virtual environment between runs
+
+      # Step 4: Install all project dependencies
+      # --extra dev installs pytest, ruff, mypy, etc.
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      # Step 5: Check code style with ruff
+      # ruff is an ultra-fast Python linter written in Rust
+      # This catches common bugs and style issues before they reach production
+      - name: Lint with ruff
+        run: uv run ruff check src/ scripts/ pipelines/
+        continue-on-error: false   # Fail the CI if there are lint errors
+
+      # Step 6: Check code formatting
+      - name: Check formatting
+        run: uv run ruff format --check src/ scripts/ pipelines/
+        continue-on-error: true    # Warning only for formatting
+
+      # Step 7: Run unit tests
+      # Unit tests don't need MLflow server — we use a local SQLite database
+      # We also skip integration tests here (they need more setup)
+      - name: Run unit tests
+        env:
+          # Use SQLite instead of a real MLflow server
+          MLFLOW_TRACKING_URI: "sqlite:///mlruns.db"
+          MLFLOW__TRACKING_URI: "sqlite:///mlruns.db"
+          PYTHONPATH: "src"
+        run: |
+          uv run pytest tests/unit/ \
+            -v \
+            --tb=short \
+            --no-header \
+            -p no:warnings
+
+      # Step 8: Report test summary in the GitHub Actions UI
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-py${{ matrix.python-version }}
+          path: |
+            .coverage
+          retention-days: 7
+
+  # -----------------------------------------------------------------------
+  # Optional: Type checking with mypy
+  # Uncomment this job once the codebase has full type annotations
+  # -----------------------------------------------------------------------
+  # type-check:
+  #   name: Type Check (mypy)
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: astral-sh/setup-uv@v4
+  #     - run: uv sync --extra dev
+  #     - run: uv run mypy src/loan_risk/

@@ -1,0 +1,200 @@
+# Training Pipeline Workflow
+# ==========================
+# This workflow runs the FULL ML training pipeline using DVC.
+#
+# What it does:
+#   1. Downloads the UCI Credit Card Default dataset
+#   2. Preprocesses it (maps UCI columns → our feature schema)
+#   3. Engineers features (splits data, fits sklearn transformers)
+#   4. Trains a LightGBM model
+#   5. Evaluates the model (AUC, Gini, KS statistic)
+#   6. Logs everything to MLflow (SQLite backend — no server needed)
+#   7. Publishes metrics to the GitHub Actions job summary
+#   8. Uploads training reports as downloadable artifacts
+#
+# When does this run?
+#   - Manually: Go to Actions → Training Pipeline → Run workflow
+#   - Automatically: Every Sunday at 02:00 UTC (weekly retraining)
+#
+# Approximate runtime: 5-10 minutes (depends on dataset download speed)
+
+name: Training Pipeline (DVC)
+
+on:
+  # Allow manual triggering from the GitHub Actions UI
+  # You can override parameters here
+  workflow_dispatch:
+    inputs:
+      model_name:
+        description: "Model to train"
+        required: false
+        default: "lgbm"
+        type: choice
+        options:
+          - lgbm
+          - xgboost
+      n_trials:
+        description: "Optuna tuning trials (0 = skip tuning)"
+        required: false
+        default: "0"
+        type: string
+      skip_tuning:
+        description: "Skip hyperparameter tuning"
+        required: false
+        default: "true"
+        type: boolean
+
+  # Automatic weekly retraining: every Sunday at 02:00 UTC
+  schedule:
+    - cron: "0 2 * * 0"
+
+# Only allow one training run at a time (prevent conflicting MLflow writes)
+concurrency:
+  group: training
+  cancel-in-progress: false
+
+jobs:
+  train:
+    name: Full DVC Pipeline
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # ----------------------------------------------------------------
+      # Setup
+      # ----------------------------------------------------------------
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Install Python dependencies
+        run: uv sync --extra dev
+
+      # Install DVC (the pipeline orchestrator / data versioning tool)
+      - name: Install DVC
+        run: uv run pip install "dvc>=3.50.0"
+
+      # Create directories that the pipeline needs
+      - name: Create required directories
+        run: |
+          mkdir -p data/raw data/processed data/reference data/monitoring
+          mkdir -p artifacts/best_params
+          mkdir -p reports/evaluation reports/monitoring reports/validation
+
+      # ----------------------------------------------------------------
+      # Run the DVC Pipeline
+      # ----------------------------------------------------------------
+
+      - name: Run DVC pipeline (dvc repro)
+        env:
+          # Use SQLite as MLflow backend — no server needed in CI
+          MLFLOW_TRACKING_URI: "sqlite:///mlruns.db"
+          MLFLOW__TRACKING_URI: "sqlite:///mlruns.db"
+          # Reduce experiment scale for CI (faster runs)
+          TRAINING__N_TRIALS: "0"
+          PYTHONPATH: "src"
+        run: |
+          echo "=== Starting DVC Pipeline ==="
+          echo "This will run 4 stages:"
+          echo "  1. download   — fetch UCI dataset"
+          echo "  2. preprocess — map UCI columns to loan schema"
+          echo "  3. featurize  — engineer features, split data"
+          echo "  4. train      — train LightGBM + evaluate"
+          echo ""
+
+          # dvc repro runs only the stages that have changed
+          # --no-lock allows parallel runs without lock file conflicts
+          uv run dvc repro --no-lock 2>&1 | tee pipeline_output.txt
+
+          echo "=== DVC Pipeline Complete ==="
+
+      # ----------------------------------------------------------------
+      # Metrics and Reporting
+      # ----------------------------------------------------------------
+
+      - name: Display metrics
+        if: always()
+        run: |
+          if [ -f "reports/evaluation/metrics.json" ]; then
+            echo "## Model Training Metrics" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+
+            # Parse metrics.json and display in GitHub summary
+            python3 -c "
+          import json, sys
+          metrics = json.load(open('reports/evaluation/metrics.json'))
+          for key, value in metrics.items():
+              if isinstance(value, float):
+                  print(f'| {key} | {value:.4f} |')
+              else:
+                  print(f'| {key} | {value} |')
+            " >> $GITHUB_STEP_SUMMARY
+
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Run ID: \`$(cat artifacts/last_training_result.json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get(\"run_id\", \"unknown\")[:8])')\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "metrics.json not found — training may have failed" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Show DVC metrics
+        if: always()
+        run: |
+          echo "=== DVC Metrics ==="
+          uv run dvc metrics show 2>/dev/null || echo "No DVC metrics available"
+
+      - name: Show DVC pipeline DAG
+        if: always()
+        run: |
+          echo "=== Pipeline DAG ==="
+          uv run dvc dag 2>/dev/null || echo "DVC dag not available"
+
+      # ----------------------------------------------------------------
+      # Upload artifacts
+      # ----------------------------------------------------------------
+
+      - name: Upload training reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: training-reports-${{ github.run_number }}
+          path: |
+            reports/
+            artifacts/last_training_result.json
+          retention-days: 30
+
+      - name: Upload validation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-report-${{ github.run_number }}
+          path: reports/validation/
+          retention-days: 30
+
+      # ----------------------------------------------------------------
+      # Failure notifications
+      # ----------------------------------------------------------------
+
+      - name: Report failure
+        if: failure()
+        run: |
+          echo "## Pipeline Failed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The training pipeline failed. Check the logs above for details." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Common issues:" >> $GITHUB_STEP_SUMMARY
+          echo "- Dataset download failed (network issue)" >> $GITHUB_STEP_SUMMARY
+          echo "- Schema validation failed (data format changed)" >> $GITHUB_STEP_SUMMARY
+          echo "- Model training failed (insufficient data or memory)" >> $GITHUB_STEP_SUMMARY

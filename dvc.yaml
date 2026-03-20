@@ -1,0 +1,95 @@
+# DVC Pipeline Definition
+# ========================
+# Run: dvc repro           → execute all stages in order
+# Run: dvc repro download  → execute only the download stage
+# Run: dvc dag             → show the pipeline dependency graph
+# Run: dvc metrics show    → show the latest metrics
+# Run: dvc params diff     → see what params changed since last run
+#
+# DVC tracks which files have changed and only re-runs stages whose
+# inputs have changed. This is like "make" but for ML pipelines.
+
+stages:
+
+  # Stage 1: Download the raw dataset from UCI/OpenML
+  # --------------------------------------------------
+  # Input:  nothing (downloads from the internet)
+  # Output: data/raw/credit_default_raw.csv
+  # Cache:  DVC caches the CSV so it won't re-download unless you delete it
+  download:
+    cmd: python scripts/download_dataset.py
+    deps:
+      - scripts/download_dataset.py
+    outs:
+      - data/raw/credit_default_raw.csv
+
+  # Stage 2: Preprocess raw UCI data into canonical loan schema
+  # -----------------------------------------------------------
+  # Input:  data/raw/credit_default_raw.csv
+  # Output: data/raw/loans.parquet  (validated, schema-conformant)
+  # Params: data.random_seed (for reproducible sampling if needed)
+  preprocess:
+    cmd: python scripts/preprocess_dataset.py
+    deps:
+      - scripts/preprocess_dataset.py
+      - data/raw/credit_default_raw.csv
+      - src/loan_risk/data/schemas.py
+    params:
+      - params.yaml:
+          - data.random_seed
+    outs:
+      - data/raw/loans.parquet
+
+  # Stage 3: Feature engineering — split data, fit sklearn pipeline
+  # ---------------------------------------------------------------
+  # Input:  data/raw/loans.parquet
+  # Output: data/processed/  (train/val/test parquets)
+  #         artifacts/preprocessor.pkl  (fitted sklearn Pipeline)
+  #         data/reference/  (reference dataset for drift monitoring)
+  featurize:
+    cmd: python scripts/run_pipeline.py --stage features
+    deps:
+      - scripts/run_pipeline.py
+      - src/loan_risk/features/
+      - src/loan_risk/data/splits.py
+      - data/raw/loans.parquet
+    params:
+      - params.yaml:
+          - training.test_size
+          - training.val_size
+          - training.random_seed
+    outs:
+      - data/processed/
+      - artifacts/preprocessor.pkl
+      - data/reference/
+
+  # Stage 4: Train model + evaluate + (optionally) register to MLflow
+  # -----------------------------------------------------------------
+  # Input:  data/processed/  (from featurize stage)
+  # Output: reports/evaluation/metrics.json  (DVC-tracked metrics)
+  #         artifacts/last_training_result.json  (for downstream use)
+  # Params: model type, random seed, promotion threshold
+  #
+  # NOTE: MLflow tracking uses SQLite by default (no server needed).
+  #       Set MLFLOW_TRACKING_URI=http://localhost:5000 to use a server.
+  train:
+    cmd: python scripts/run_pipeline.py --stage train --skip-tuning && python scripts/run_pipeline.py --stage evaluate
+    deps:
+      - scripts/run_pipeline.py
+      - src/loan_risk/training/
+      - src/loan_risk/evaluation/
+      - src/loan_risk/registry/
+      - data/processed/
+      - artifacts/preprocessor.pkl
+    params:
+      - params.yaml:
+          - training.model_name
+          - training.random_seed
+          - model.promotion_auc_threshold
+    metrics:
+      - reports/evaluation/metrics.json:
+          cache: false
+    outs:
+      - artifacts/last_training_result.json:
+          cache: false
+          persist: true
