@@ -7,7 +7,7 @@ MLflow infrastructure.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -54,15 +54,23 @@ def mock_predictor():
 
 @pytest.fixture
 def client(mock_predictor):
-    """Test client with mocked predictor using FastAPI dependency overrides."""
+    """Test client with mocked predictor.
+
+    Two layers of mocking are needed:
+    1. app.dependency_overrides — makes Depends(get_predictor) in route
+       handlers return the mock (FastAPI's DI system).
+    2. patch on the app module's get_predictor — makes the lifespan's
+       direct get_predictor() call return the mock too (lifespan bypasses DI).
+    """
     from loan_risk.serving.predictor import get_predictor
 
     app = create_app()
-    # FastAPI dependency override: replace get_predictor with a function
-    # that always returns our mock — this is the correct way to mock Depends()
     app.dependency_overrides[get_predictor] = lambda: mock_predictor
-    with TestClient(app, raise_server_exceptions=True) as c:
-        yield c
+
+    with patch("loan_risk.serving.app.get_predictor", return_value=mock_predictor):
+        with TestClient(app, raise_server_exceptions=True) as c:
+            yield c
+
     app.dependency_overrides.clear()
 
 
