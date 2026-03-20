@@ -1,7 +1,8 @@
 # 🏦 Loan Risk MLOps Pipeline
 
-[![CI — Lint & Tests](https://github.com/YOUR_USERNAME/loan-risk-mlops/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_USERNAME/loan-risk-mlops/actions/workflows/ci.yml)
-[![Training Pipeline](https://github.com/YOUR_USERNAME/loan-risk-mlops/actions/workflows/training.yml/badge.svg)](https://github.com/YOUR_USERNAME/loan-risk-mlops/actions/workflows/training.yml)
+[![CI — Lint & Tests](https://github.com/saichandra1199/loan-risk-mlops/actions/workflows/ci.yml/badge.svg)](https://github.com/saichandra1199/loan-risk-mlops/actions/workflows/ci.yml)
+[![Training Pipeline](https://github.com/saichandra1199/loan-risk-mlops/actions/workflows/training.yml/badge.svg)](https://github.com/saichandra1199/loan-risk-mlops/actions/workflows/training.yml)
+[![Test Serving Layer](https://github.com/saichandra1199/loan-risk-mlops/actions/workflows/serve.yml/badge.svg)](https://github.com/saichandra1199/loan-risk-mlops/actions/workflows/serve.yml)
 [![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/release/python-3110/)
 [![DVC](https://img.shields.io/badge/DVC-pipeline-purple)](https://dvc.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -24,12 +25,16 @@
 7. [Quick Start (from zero to running)](#7-quick-start-from-zero-to-running)
 8. [Understanding DVC (Data Version Control)](#8-understanding-dvc-data-version-control)
 9. [Understanding GitHub Actions (CI/CD)](#9-understanding-github-actions-cicd)
-10. [Pipeline Stages — What Happens at Each Step](#10-pipeline-stages--what-happens-at-each-step)
-11. [API Reference](#11-api-reference)
-12. [Configuration Guide](#12-configuration-guide)
-13. [Running Experiments](#13-running-experiments)
-14. [Troubleshooting](#14-troubleshooting)
-15. [FAQ for Beginners](#15-faq-for-beginners)
+10. [Current Pipeline Status — All Green](#10-current-pipeline-status--all-green)
+11. [Pipeline Stages — What Happens at Each Step](#11-pipeline-stages--what-happens-at-each-step)
+12. [API Reference](#12-api-reference)
+13. [Configuration Guide](#13-configuration-guide)
+14. [Running Experiments](#14-running-experiments)
+15. [How to Implement New Features](#15-how-to-implement-new-features)
+16. [Monitoring the Pipeline](#16-monitoring-the-pipeline)
+17. [Debugging Guide](#17-debugging-guide)
+18. [Troubleshooting](#18-troubleshooting)
+19. [FAQ for Beginners](#19-faq-for-beginners)
 
 ---
 
@@ -434,7 +439,7 @@ Optional (for the full stack):
 ### Step 1: Clone the repository
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/loan-risk-mlops.git
+git clone https://github.com/saichandra1199/loan-risk-mlops.git
 cd loan-risk-mlops
 ```
 
@@ -745,7 +750,125 @@ After a training run:
 
 ---
 
-## 10. Pipeline Stages — What Happens at Each Step
+## 10. Current Pipeline Status — All Green
+
+This section shows the exact state of all three CI/CD workflows as of the initial setup.
+Every workflow badge at the top of this README is live — click any badge to see the latest run.
+
+### The three workflows
+
+| Workflow | Trigger | What it checks | Typical duration |
+|---|---|---|---|
+| **CI — Lint & Unit Tests** | Every push to any branch | Code style (ruff) + 30 unit tests | ~35 seconds |
+| **Test Serving Layer** | Push touching `src/serving/` or `test_api.py` | 7 FastAPI endpoint integration tests | ~45 seconds |
+| **Training Pipeline (DVC)** | Every Sunday 02:00 UTC + manual trigger | Full 4-stage DVC pipeline (download → train) | ~5 minutes |
+
+### What "green" means for each workflow
+
+#### CI — Lint & Unit Tests
+
+```
+✓ Checkout code
+✓ Set up Python 3.11
+✓ Install uv                    (fast package manager, ~10s)
+✓ Install dependencies          (uv sync --extra dev, uses cached uv.lock)
+✓ Lint with ruff                (checks code style — 0 errors)
+✓ Check formatting              (warning only)
+✓ Run unit tests                (30/30 passed in ~3s)
+✓ Upload test results
+```
+
+All 30 unit tests cover:
+- `test_schemas.py` — Pandera validates correct data, rejects bad credit scores / invalid purposes
+- `test_transformers.py` — Each custom sklearn transformer produces correct output
+- `test_splits.py` — Stratified split preserves default rate, no overlap between sets
+- `test_metrics.py` — AUC, Gini, KS statistic calculations are mathematically correct
+
+#### Test Serving Layer
+
+```
+✓ Checkout code
+✓ Set up Python 3.11
+✓ Install uv + dependencies
+✓ Run API integration tests     (7/7 passed in ~3s)
+```
+
+The 7 integration tests cover:
+- `POST /predict` returns HTTP 200 with valid input
+- `POST /predict` response matches the `PredictionResponse` schema
+- `POST /predict` returns HTTP 422 (validation error) for credit_score < 300
+- `POST /predict` returns HTTP 422 for unknown `loan_purpose`
+- `GET /health` returns `model_loaded: true`
+- `GET /metrics` returns Prometheus-format text
+- `GET /model-info` returns model name + version
+
+The tests use a **mock predictor** — no real MLflow model needed.
+This is done with FastAPI's `app.dependency_overrides` system.
+
+#### Training Pipeline (DVC)
+
+```
+✓ Checkout code
+✓ Set up Python 3.11
+✓ Install uv + DVC
+✓ Create required directories
+✓ dvc repro --no-lock           (runs all 4 pipeline stages)
+  ✓ download   → data/raw/credit_default_raw.csv   (30K rows from UCI)
+  ✓ preprocess → data/raw/loans.parquet            (Pandera validated)
+  ✓ featurize  → data/processed/ + preprocessor.pkl
+  ✓ train      → reports/evaluation/metrics.json
+✓ Display metrics               (AUC, Gini, KS shown in job summary)
+✓ Upload reports artifact       (downloadable for 30 days)
+```
+
+### How to view live results
+
+1. Go to https://github.com/saichandra1199/loan-risk-mlops
+2. Click the **Actions** tab
+3. Click any workflow run to see step-by-step logs
+4. For the Training Pipeline: click the run → click the job → scroll to
+   **"Display metrics"** to see the AUC table, or download the **reports** artifact
+
+### How to trigger the training pipeline manually
+
+From the GitHub web UI:
+1. Actions → **Training Pipeline (DVC)**
+2. Click **Run workflow** (top right)
+3. Set inputs:
+   - `model_name`: `lgbm` or `xgboost`
+   - `n_trials`: `50` (number of Optuna tuning trials)
+   - `skip_tuning`: `false` (set `true` for a fast run without tuning)
+
+From the command line (requires gh CLI):
+```bash
+gh workflow run training.yml \
+  -f model_name=lgbm \
+  -f n_trials=50 \
+  -f skip_tuning=false
+```
+
+### Watching workflow results from the terminal
+
+```bash
+# Install gh CLI (if not already installed)
+# Download from: https://github.com/cli/cli/releases/latest
+
+# List recent workflow runs
+gh run list --repo saichandra1199/loan-risk-mlops --limit 10
+
+# Watch a run live (replace RUN_ID with the number from the list)
+gh run watch RUN_ID --repo saichandra1199/loan-risk-mlops
+
+# See logs from a failed run
+gh run view RUN_ID --repo saichandra1199/loan-risk-mlops --log-failed
+
+# Download artifacts from a training run
+gh run download RUN_ID --repo saichandra1199/loan-risk-mlops
+```
+
+---
+
+## 11. Pipeline Stages — What Happens at Each Step
 
 ### Stage 1: Download (`python scripts/download_dataset.py`)
 
@@ -792,7 +915,7 @@ After a training run:
 
 ---
 
-## 11. API Reference
+## 12. API Reference
 
 ### POST /predict
 
@@ -896,7 +1019,7 @@ Auto-generated interactive API documentation (Swagger UI). Open in browser: http
 
 ---
 
-## 12. Configuration Guide
+## 13. Configuration Guide
 
 ### The two configuration files
 
@@ -939,7 +1062,7 @@ The `__` separates nested keys: `MLFLOW__TRACKING_URI` maps to `mlflow.tracking_
 
 ---
 
-## 13. Running Experiments
+## 14. Running Experiments
 
 ### How to compare two model types
 
@@ -983,7 +1106,786 @@ uv run python scripts/run_pipeline.py --stage train --stage evaluate
 
 ---
 
-## 14. Troubleshooting
+## 15. How to Implement New Features
+
+This section is a practical guide for extending the pipeline.
+Every change follows the same pattern: **code → schema → pipeline → test → push**.
+
+---
+
+### Pattern A: Add a new input feature to the model
+
+**Example**: You want to add `loan_age_days` (how old the loan application is) as a feature.
+
+**Step 1 — Add the column name to the feature definitions**
+
+Open `src/loan_risk/features/definitions.py`:
+```python
+# Before:
+NUMERIC_FEATURES = [
+    "loan_amount", "annual_income", "employment_years",
+    ...
+]
+
+# After — add your new feature:
+NUMERIC_FEATURES = [
+    "loan_amount", "annual_income", "employment_years",
+    "loan_age_days",   # ← add here
+    ...
+]
+```
+
+**Step 2 — Update the Pandera schema**
+
+Open `src/loan_risk/data/schemas.py` and add the column:
+```python
+class RawLoanSchema(pa.DataFrameModel):
+    ...
+    loan_age_days: Series[int] = pa.Field(ge=0, le=3650)  # 0 to 10 years
+```
+
+**Step 3 — Produce the column in the preprocessing script**
+
+Open `scripts/preprocess_dataset.py`, find the `preprocess()` function, and add:
+```python
+result["loan_age_days"] = 0  # placeholder if not in UCI data
+# Or if you have a real source column:
+result["loan_age_days"] = pd.to_numeric(df["some_date_column"], errors="coerce").fillna(0)
+```
+
+**Step 4 — The pipeline handles the rest automatically**
+
+Since `loan_age_days` is in `NUMERIC_FEATURES`, the sklearn `ColumnTransformer` in
+`src/loan_risk/features/pipeline.py` will automatically:
+- Apply `StandardScaler` to it
+- Include it in the training matrix
+
+**Step 5 — Write a unit test**
+
+Add to `tests/unit/test_schemas.py`:
+```python
+def test_schema_accepts_valid_loan_age():
+    df = make_valid_df()
+    df["loan_age_days"] = 365
+    validate_raw(pl.from_pandas(df))  # should not raise
+
+def test_schema_rejects_negative_loan_age():
+    df = make_valid_df()
+    df["loan_age_days"] = -1
+    with pytest.raises(DataValidationError):
+        validate_raw(pl.from_pandas(df))
+```
+
+**Step 6 — Re-run the pipeline**
+
+```bash
+dvc repro          # DVC detects schemas.py changed → re-runs preprocess + featurize + train
+```
+
+---
+
+### Pattern B: Add a custom feature transformer
+
+**Example**: You want to add a `IncomeToDebtFlag` transformer that marks
+customers whose income is very low relative to their debt.
+
+**Step 1 — Write the transformer**
+
+Open `src/loan_risk/features/transformers.py` and add:
+```python
+class IncomeToDebtFlag(BaseEstimator, TransformerMixin):
+    """Flags customers with income < 3× their monthly debt payment."""
+
+    def __init__(self, multiplier: float = 3.0) -> None:
+        self.multiplier = multiplier
+
+    def fit(self, X: pd.DataFrame, y=None):
+        return self
+
+    def transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        out = X.copy()
+        monthly_income = out["annual_income"] / 12
+        monthly_debt = out["loan_amount"] / out.get("loan_term_months", 36)
+        out["low_income_flag"] = (monthly_income < self.multiplier * monthly_debt).astype(int)
+        return out
+```
+
+**Step 2 — Add it to the feature pipeline**
+
+Open `src/loan_risk/features/pipeline.py`, find `build_feature_pipeline()`, and insert your step:
+```python
+from loan_risk.features.transformers import (
+    ...
+    IncomeToDebtFlag,   # ← import it
+)
+
+def build_feature_pipeline() -> Pipeline:
+    return Pipeline([
+        ("loan_to_income", LoanToIncomeRatioTransformer()),
+        ("log_transforms", LogTransformer(...)),
+        ("income_debt_flag", IncomeToDebtFlag(multiplier=3.0)),   # ← add step
+        ...
+    ])
+```
+
+**Step 3 — Add to feature definitions**
+
+```python
+# In src/loan_risk/features/definitions.py
+ENGINEERED_FEATURES = [
+    "loan_to_income_ratio",
+    "log_loan_amount",
+    "log_annual_income",
+    "credit_score_band",
+    "high_delinquency_risk",
+    "low_income_flag",          # ← add here
+]
+```
+
+**Step 4 — Write a unit test**
+
+```python
+# In tests/unit/test_transformers.py
+class TestIncomeToDebtFlag:
+    def test_flags_low_income(self):
+        df = pd.DataFrame({"annual_income": [12000], "loan_amount": [50000], "loan_term_months": [36]})
+        out = IncomeToDebtFlag(multiplier=3.0).fit_transform(df)
+        assert out["low_income_flag"].iloc[0] == 1
+
+    def test_does_not_flag_high_income(self):
+        df = pd.DataFrame({"annual_income": [120000], "loan_amount": [10000], "loan_term_months": [36]})
+        out = IncomeToDebtFlag(multiplier=3.0).fit_transform(df)
+        assert out["low_income_flag"].iloc[0] == 0
+```
+
+---
+
+### Pattern C: Add a new API endpoint
+
+**Example**: Add `GET /predict/batch` that accepts a list of applicants and returns all predictions at once.
+
+**Step 1 — Add request/response schemas**
+
+Open `src/loan_risk/serving/schemas.py` and add:
+```python
+class BatchPredictionRequest(BaseModel):
+    applications: list[LoanApplicationRequest]
+
+class BatchPredictionResponse(BaseModel):
+    predictions: list[PredictionResponse]
+    count: int
+    failed: int
+```
+
+**Step 2 — Add the route**
+
+Open `src/loan_risk/serving/routes.py` and add:
+```python
+from loan_risk.serving.schemas import BatchPredictionRequest, BatchPredictionResponse
+
+@router.post("/predict/batch", response_model=BatchPredictionResponse, tags=["Prediction"])
+async def predict_batch(
+    request: BatchPredictionRequest,
+    predictor: ModelPredictor = Depends(get_predictor),
+) -> BatchPredictionResponse:
+    results, failed = [], 0
+    for i, app in enumerate(request.applications):
+        try:
+            pred = predictor.predict(app, request_id=f"batch_{i}")
+            results.append(pred)
+        except Exception:
+            failed += 1
+    return BatchPredictionResponse(predictions=results, count=len(results), failed=failed)
+```
+
+**Step 3 — Add an integration test**
+
+```python
+# In tests/integration/test_api.py
+def test_batch_predict(client):
+    response = client.post("/predict/batch", json={"applications": [SAMPLE_REQUEST, SAMPLE_REQUEST]})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["count"] == 2
+    assert data["failed"] == 0
+```
+
+**Step 4 — Push and watch CI turn green**
+
+```bash
+git add -A && git commit -m "Add batch prediction endpoint"
+git push origin main
+# → serve.yml triggers because serving code changed
+# → All tests run automatically
+```
+
+---
+
+### Pattern D: Add a new evaluation metric
+
+**Example**: You want to track `precision_at_30pct` (precision when approving the top 30% lowest-risk applicants).
+
+**Step 1 — Add the metric function**
+
+Open `src/loan_risk/evaluation/metrics.py`:
+```python
+def compute_precision_at_k(y_true: np.ndarray, y_prob: np.ndarray, k: float = 0.30) -> float:
+    """Precision when approving the lowest-risk k% of applicants."""
+    n_approve = int(len(y_prob) * k)
+    # Sort by probability ascending (lowest risk first), take top k%
+    top_k_indices = np.argsort(y_prob)[:n_approve]
+    # Precision = fraction of approved who actually didn't default
+    precision = 1.0 - y_true[top_k_indices].mean()
+    return float(precision)
+```
+
+**Step 2 — Include it in compute_classification_metrics()**
+
+```python
+def compute_classification_metrics(...) -> dict:
+    return {
+        "auc_roc": ...,
+        "gini": ...,
+        "ks_statistic": ...,
+        "precision_at_30pct": compute_precision_at_k(y_true, y_prob, k=0.30),   # ← add
+    }
+```
+
+**Step 3 — Log it to MLflow in the trainer**
+
+In `src/loan_risk/training/trainer.py`, find where `mlflow.log_metrics()` is called:
+```python
+mlflow.log_metrics({
+    "val_auc": val_metrics["auc_roc"],
+    "val_gini": val_metrics["gini"],
+    "val_precision_at_30pct": val_metrics["precision_at_30pct"],   # ← add
+    ...
+})
+```
+
+**Step 4 — Add it to the DVC metrics output**
+
+In `scripts/run_pipeline.py`, find where `metrics.json` is written:
+```python
+metrics_path.write_text(json.dumps({
+    "test_auc": training_result.test_auc,
+    "test_precision_at_30pct": training_result.test_metrics.get("precision_at_30pct"),  # ← add
+    ...
+}))
+```
+
+Now `dvc metrics show` and the GitHub Actions job summary will include this metric.
+
+---
+
+### Pattern E: Change the ML model
+
+**Example**: Try XGBoost instead of LightGBM.
+
+**Option 1 — Quick experiment (no code change)**
+
+```bash
+# Edit params.yaml:
+# training:
+#   model_name: xgboost
+
+dvc repro   # DVC sees params.yaml changed, re-runs train stage only
+```
+
+**Option 2 — Add a brand new model type**
+
+In `src/loan_risk/training/models.py`, add your model to `get_model()`:
+```python
+def get_model(name: str, params: dict, ...) -> Any:
+    if name == "lgbm":
+        return LGBMClassifier(...)
+    elif name == "xgboost":
+        return XGBClassifier(...)
+    elif name == "catboost":
+        from catboost import CatBoostClassifier     # ← new model
+        return CatBoostClassifier(**params, ...)
+    else:
+        raise ValueError(f"Unknown model: {name}")
+```
+
+Add the new tuning objective in `src/loan_risk/tuning/objective.py`:
+```python
+def catboost_objective(trial, X_train, y_train, X_val, y_val, ...):
+    params = {
+        "depth": trial.suggest_int("depth", 4, 10),
+        "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.3, log=True),
+        "iterations": trial.suggest_int("iterations", 100, 1000),
+    }
+    model = get_model("catboost", params, ...)
+    model.fit(X_train, y_train, eval_set=(X_val, y_val), verbose=False)
+    return roc_auc_score(y_val, model.predict_proba(X_val)[:, 1])
+```
+
+---
+
+### Quick reference: which file to change for what
+
+| What you want to do | File(s) to change |
+|---|---|
+| Add/remove an input feature | `features/definitions.py` + `data/schemas.py` + `preprocess_dataset.py` |
+| Change how a feature is transformed | `features/transformers.py` + `features/pipeline.py` |
+| Try a different model | `params.yaml` (no code) or `training/models.py` (new type) |
+| Add a new evaluation metric | `evaluation/metrics.py` + `training/trainer.py` |
+| Change the promotion threshold | `params.yaml` → `model.promotion_auc_threshold` |
+| Add a new API endpoint | `serving/routes.py` + `serving/schemas.py` |
+| Change drift alert thresholds | `config/monitoring_thresholds.yaml` |
+| Change the training schedule | `.github/workflows/training.yml` (cron expression) |
+| Add a new Prefect flow | `pipelines/flows.py` + `pipelines/tasks.py` |
+
+---
+
+## 16. Monitoring the Pipeline
+
+Monitoring means watching what is happening right now and catching problems early.
+There are three levels of monitoring in this project:
+
+---
+
+### Level 1: Pipeline health (did it run? did it pass?)
+
+**GitHub Actions** — pipeline-level health:
+```bash
+# From terminal
+gh run list --repo saichandra1199/loan-risk-mlops --limit 10
+
+# Or watch the live badges at the top of this README
+```
+
+Go to: https://github.com/saichandra1199/loan-risk-mlops/actions
+
+What to look for:
+- Red X on `CI — Lint & Unit Tests` → a code change broke a test or style rule
+- Red X on `Training Pipeline` → the model failed to train or missed the AUC gate
+- Yellow circle → the run is still in progress
+
+---
+
+### Level 2: Experiment metrics (is the model getting better or worse?)
+
+**MLflow UI** — experiment-level tracking:
+
+```bash
+# Start MLflow UI pointing at your local SQLite database
+mlflow ui --backend-store-uri sqlite:///mlruns.db --port 5000
+# Open: http://localhost:5000
+```
+
+Or with Docker (full stack):
+```bash
+docker-compose up -d mlflow
+# Open: http://localhost:5000
+```
+
+What you can do in the MLflow UI:
+- **Experiments view**: See every training run with its AUC, Gini, KS side by side
+- **Compare runs**: Select 2+ runs → "Compare" → see parameter differences + metric plots
+- **Artifacts**: Download the model, feature importance plots, SHAP summary plots
+- **Model Registry**: See which version is "champion", which are archived
+
+Key metrics to watch:
+```
+test_auc     → should be ≥ 0.75 (promotion gate)
+val_auc      → should be close to test_auc (large gap = overfitting)
+val_gini     → 2×AUC - 1; ≥ 0.50 is good for credit scoring
+val_ks       → KS statistic; ≥ 0.35 is good
+threshold    → calibrated decision boundary (typically 0.30-0.50)
+```
+
+**From DVC**:
+```bash
+# Show current metrics
+dvc metrics show
+
+# Compare current run to the previous git commit
+dvc metrics diff HEAD~1
+
+# Compare across multiple git commits
+dvc metrics diff main~3 main
+
+# See which parameters changed
+dvc params diff HEAD~1
+```
+
+Example output of `dvc metrics show`:
+```
+Path                              auc_roc    gini    ks_stat
+reports/evaluation/metrics.json  0.764      0.528   0.387
+```
+
+---
+
+### Level 3: Live API health (is the service responding?)
+
+**Prometheus + Grafana** — real-time API metrics:
+
+```bash
+docker-compose up -d prometheus grafana
+# Prometheus: http://localhost:9090
+# Grafana:    http://localhost:3000  (login: admin / admin)
+```
+
+The FastAPI server automatically exposes metrics at `GET /metrics`:
+```bash
+curl http://localhost:8000/metrics
+```
+
+Key metrics exported:
+```
+loan_risk_predictions_total{prediction="APPROVE"}   # Count of approvals
+loan_risk_predictions_total{prediction="REJECT"}    # Count of rejections
+loan_risk_prediction_latency_seconds{quantile="0.99"}  # 99th percentile latency
+loan_risk_default_probability{bucket="..."}         # Histogram of predicted probabilities
+```
+
+**Health endpoint for quick checks**:
+```bash
+curl http://localhost:8000/health
+
+# Response tells you:
+# - Is the model loaded?
+# - Which model version is running?
+# - How long has the server been up?
+```
+
+---
+
+### Level 4: Data drift (is the world changing?)
+
+**Evidently reports** — statistical drift detection:
+
+```python
+# Run the drift check (after collecting enough live data)
+from loan_risk.monitoring.drift import generate_drift_report
+import polars as pl
+
+reference_df = pl.read_parquet("data/reference/train.parquet")
+current_df   = pl.read_parquet("data/monitoring/live_predictions.parquet")
+
+report = generate_drift_report(reference_df, current_df, output_path="reports/monitoring/drift_report.html")
+print(report)  # Shows PSI for each feature
+```
+
+Or via the Prefect pipeline:
+```bash
+uv run python -c "
+from pipelines.flows import daily_monitor_flow
+daily_monitor_flow(
+    reference_path='data/reference/train.parquet',
+    current_path='data/monitoring/live_predictions.parquet',
+    auto_retrain=False
+)
+"
+```
+
+**Understanding PSI (Population Stability Index)**:
+
+| PSI Value | Meaning | Action |
+|---|---|---|
+| < 0.10 | No drift | No action needed |
+| 0.10 – 0.15 | Slight drift | Monitor more closely |
+| 0.15 – 0.25 | Moderate drift | Investigate + consider retraining |
+| > 0.25 | Significant drift | Retrain immediately |
+
+The drift report is an HTML file (`reports/monitoring/drift_report.html`).
+Open it in a browser to see per-feature drift visualisations.
+
+---
+
+### Monitoring checklist — what to check each week
+
+```
+□ GitHub Actions: all workflows green this week?
+□ MLflow: latest training run AUC ≥ 0.75?
+□ MLflow: val_auc and test_auc within 0.03 of each other? (no overfitting)
+□ /health endpoint: model_loaded = true?
+□ Drift report: any feature PSI > 0.15?
+□ Live AUC (if labels available): AUC ≥ 0.70?
+□ Prediction distribution: approval rate stable (not suddenly 90% REJECT)?
+```
+
+---
+
+## 17. Debugging Guide
+
+This section explains how to diagnose the most common problems in each layer of the pipeline.
+
+---
+
+### How to read structured logs
+
+All logs use JSON format in production. Every log line looks like:
+```json
+{
+  "event": "model_trained",
+  "run_id": "a3f8b2c1",
+  "val_auc": 0.7682,
+  "test_auc": 0.7591,
+  "level": "info",
+  "logger": "loan_risk.training.trainer",
+  "timestamp": "2026-01-15T14:23:01.234Z"
+}
+```
+
+Key fields:
+- `event` — what happened (grep for this to find specific events)
+- `level` — `debug`, `info`, `warning`, `error`
+- `logger` — which module logged this (tells you exactly where in code)
+- `timestamp` — when it happened
+
+**Useful grep patterns**:
+```bash
+# Watch all log output in real time
+uv run python scripts/run_pipeline.py --stage all 2>&1 | jq .
+
+# Find all errors
+uv run python scripts/run_pipeline.py --stage train 2>&1 | jq 'select(.level == "error")'
+
+# Find model training events only
+... | jq 'select(.logger | startswith("loan_risk.training"))'
+
+# Find the final AUC
+... | jq 'select(.event == "model_trained") | {auc: .test_auc, run_id: .run_id}'
+```
+
+If you don't have `jq` installed: `sudo apt install jq` or `brew install jq`.
+
+---
+
+### Debugging the data pipeline
+
+**Problem: Pandera schema validation fails**
+
+The error message tells you exactly which column failed and why:
+```
+DataValidationError: Schema validation failed:
+  Column 'credit_score': 15 values out of range [300, 850]
+  Failing values: [1500, 0, -99, ...]
+```
+
+How to investigate:
+```python
+import pandas as pd
+df = pd.read_parquet("data/raw/loans.parquet")
+
+# Check the failing column
+print(df["credit_score"].describe())
+print(df["credit_score"].value_counts().head(20))
+print(df[df["credit_score"] > 850])   # Find the out-of-range rows
+```
+
+The preprocessing script auto-clips most values, but if something is structurally wrong,
+you need to trace back to `scripts/preprocess_dataset.py` and find where `credit_score` is derived.
+
+**Problem: Data splits have wrong default rates**
+
+```python
+import polars as pl
+train = pl.read_parquet("data/processed/train.parquet")
+val   = pl.read_parquet("data/processed/val.parquet")
+test  = pl.read_parquet("data/processed/test.parquet")
+
+# Expected: all three ~22%
+print("Train default rate:", train["loan_default"].mean())
+print("Val default rate:  ", val["loan_default"].mean())
+print("Test default rate: ", test["loan_default"].mean())
+```
+
+If the rates differ by more than 3%, the stratification failed. Check `random_seed` in `params.yaml`.
+
+**Problem: Feature count mismatch between training and inference**
+
+```python
+import joblib
+pipeline = joblib.load("artifacts/preprocessor.pkl")
+feature_names = pipeline.get_feature_names_out()
+print(f"Pipeline expects {len(feature_names)} features:")
+print(list(feature_names))
+```
+
+The model was trained with a different set of features than what the API is receiving.
+Always re-run the full `dvc repro` after changing features — never train and serve with
+a mismatched preprocessor.
+
+---
+
+### Debugging the model training
+
+**Problem: val_auc much lower than expected**
+
+Common causes and checks:
+```python
+import numpy as np
+
+# Check class balance in training data
+y_train = np.load("data/processed/y_train.npy")
+print(f"Default rate in training: {y_train.mean():.1%}")
+print(f"scale_pos_weight should be: {(1-y_train.mean()) / y_train.mean():.2f}")
+
+# Check if scale_pos_weight in config matches actual imbalance
+# It should be ~3.5 for this dataset
+```
+
+**Problem: Training hangs at Optuna trials**
+
+Optuna prints a progress table. If it's stuck on a single trial for >5 minutes:
+```python
+# In src/loan_risk/tuning/objective.py, the early stopping should kick in
+# Add more verbose logging by temporarily changing:
+import optuna
+optuna.logging.set_verbosity(optuna.logging.DEBUG)
+```
+
+Or just skip tuning for debugging:
+```bash
+uv run python scripts/run_pipeline.py --stage train --skip-tuning
+```
+
+**Problem: Model doesn't pass the AUC gate**
+
+```bash
+# Check what AUC was achieved
+cat reports/evaluation/metrics.json
+
+# Check what the threshold is
+cat params.yaml | grep promotion_auc_threshold
+
+# Temporarily lower the threshold to test the pipeline end-to-end:
+# In params.yaml, change:
+#   model:
+#     promotion_auc_threshold: 0.60   # Lower for testing only
+```
+
+---
+
+### Debugging the API
+
+**Problem: 500 Internal Server Error on `/predict`**
+
+Enable detailed error messages:
+```bash
+# Run the server with detailed tracebacks
+PYTHONPATH=src uv run uvicorn loan_risk.serving.app:create_app \
+  --factory --port 8000 --reload --log-level debug
+```
+
+Then try the failing request again. The server logs will show the full Python traceback.
+
+**Problem: 422 Unprocessable Entity**
+
+The request body fails Pydantic validation. The response body tells you exactly what's wrong:
+```json
+{
+  "detail": [
+    {
+      "type": "less_than_equal",
+      "loc": ["body", "credit_score"],
+      "msg": "Input should be less than or equal to 850",
+      "input": 900
+    }
+  ]
+}
+```
+
+**Problem: `Model not loaded` error**
+
+```bash
+# Check if a champion model exists in the registry
+MLFLOW_TRACKING_URI=sqlite:///mlruns.db \
+  uv run python -c "
+from loan_risk.registry.client import MLflowRegistryClient
+client = MLflowRegistryClient()
+print(client.list_versions())
+"
+```
+
+If the list is empty, train and promote a model first:
+```bash
+uv run python scripts/run_pipeline.py --stage all --skip-tuning
+```
+
+---
+
+### Debugging GitHub Actions failures
+
+**Step 1: Read the error, don't just look at the red X**
+
+Click the failing job → expand the failing step → read the actual error message.
+The most common causes:
+
+| Error in CI | Likely cause | Fix |
+|---|---|---|
+| `No module named 'X'` | Dependency missing from `pyproject.toml` | Add it to `[project.dependencies]` |
+| `assert X == Y` in tests | A test expected a different value | Read the test + fix the logic |
+| `ruff: Found N errors` | Code style violations | Run `uv run ruff check --fix` locally |
+| `dvc repro: stage failed` | A pipeline script crashed | Run the failing script locally and read the error |
+| `Permission denied` | File/directory doesn't exist | Add `mkdir -p` before writing to the path |
+
+**Step 2: Reproduce locally**
+
+The CI environment is just Ubuntu + Python 3.11. Reproduce it:
+```bash
+# Exact same commands as CI:
+uv sync --extra dev
+MLFLOW_TRACKING_URI=sqlite:///mlruns.db PYTHONPATH=src uv run pytest tests/unit/ -v
+```
+
+**Step 3: Check the full log**
+
+```bash
+gh run view RUN_ID --repo saichandra1199/loan-risk-mlops --log-failed 2>&1 | less
+```
+
+**Step 4: Add a debug print to narrow down**
+
+If a test is failing with a confusing error, add a `print()` statement before the assertion:
+```python
+def test_something():
+    result = compute_thing()
+    print(f"DEBUG: result = {result}")   # ← will appear in CI logs
+    assert result == expected_value
+```
+
+Then push. The CI logs will show your debug output.
+
+---
+
+### Common debugging workflow (step by step)
+
+```
+1. Something is wrong (red CI, bad AUC, API error)
+         ↓
+2. Read the error message carefully
+   - What file/line?
+   - What was expected vs actual?
+         ↓
+3. Reproduce locally
+   - Run the exact failing command
+   - Add -v or --log-level debug for more output
+         ↓
+4. Isolate the problem
+   - Comment out code until the error disappears
+   - Binary search: is the problem in step A or step B?
+         ↓
+5. Check the data at each stage
+   - print(df.shape), print(df.dtypes), print(df.head())
+   - Check for NaN: print(df.isnull().sum())
+   - Check ranges: print(df.describe())
+         ↓
+6. Fix the issue
+         ↓
+7. Write a test that would have caught it
+         ↓
+8. Push — verify CI turns green
+```
+
+---
+
+## 18. Troubleshooting
 
 ### "No module named 'loan_risk'"
 
@@ -1043,7 +1945,7 @@ uv run python scripts/run_pipeline.py --stage all --skip-tuning
 
 ---
 
-## 15. FAQ for Beginners
+## 19. FAQ for Beginners
 
 **Q: What's the difference between `data/raw/` and `data/processed/`?**
 
