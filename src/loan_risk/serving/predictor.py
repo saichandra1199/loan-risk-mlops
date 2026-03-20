@@ -12,16 +12,14 @@ from __future__ import annotations
 import time
 from typing import Any
 
-import numpy as np
-import pandas as pd
 import polars as pl
 import shap
 from prometheus_client import Counter, Histogram
 
 from loan_risk.config import get_settings
 from loan_risk.evaluation.explainability import get_top_shap_factors
-from loan_risk.exceptions import ModelNotFoundError, PredictionError
-from loan_risk.features.pipeline import build_feature_pipeline, get_feature_names, load_pipeline
+from loan_risk.exceptions import PredictionError
+from loan_risk.features.pipeline import build_feature_pipeline, load_pipeline
 from loan_risk.logging_setup import get_logger
 from loan_risk.registry.client import MLflowRegistryClient
 from loan_risk.serving.schemas import (

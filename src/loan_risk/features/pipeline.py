@@ -30,13 +30,12 @@ from loan_risk.features.definitions import (
     CREDIT_SCORE_LABELS,
     LOG_TRANSFORM_FEATURES,
     NUMERIC_FEATURES,
-    TARGET_COLUMN,
 )
 from loan_risk.features.transformers import (
     CreditScoreBinner,
     DelinquencyRiskFlag,
-    LogTransformer,
     LoanToIncomeRatioTransformer,
+    LogTransformer,
 )
 from loan_risk.logging_setup import get_logger
 

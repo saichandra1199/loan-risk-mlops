@@ -16,7 +16,7 @@ from sklearn.base import BaseEstimator, TransformerMixin
 class LoanToIncomeRatioTransformer(TransformerMixin, BaseEstimator):
     """Adds loan_to_income_ratio = loan_amount / annual_income."""
 
-    def fit(self, X: pd.DataFrame, y: pd.Series | None = None) -> "LoanToIncomeRatioTransformer":
+    def fit(self, X: pd.DataFrame, y: pd.Series | None = None) -> LoanToIncomeRatioTransformer:
         return self
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
@@ -42,7 +42,7 @@ class LogTransformer(TransformerMixin, BaseEstimator):
         self.columns = columns or ["loan_amount", "annual_income"]
         self.prefix = prefix
 
-    def fit(self, X: pd.DataFrame, y: pd.Series | None = None) -> "LogTransformer":
+    def fit(self, X: pd.DataFrame, y: pd.Series | None = None) -> LogTransformer:
         return self
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
@@ -72,7 +72,7 @@ class CreditScoreBinner(TransformerMixin, BaseEstimator):
         self.labels = labels or ["Poor", "Fair", "Good", "Very_Good", "Exceptional"]
         self.output_column = output_column
 
-    def fit(self, X: pd.DataFrame, y: pd.Series | None = None) -> "CreditScoreBinner":
+    def fit(self, X: pd.DataFrame, y: pd.Series | None = None) -> CreditScoreBinner:
         return self
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
@@ -93,7 +93,7 @@ class DelinquencyRiskFlag(TransformerMixin, BaseEstimator):
     def __init__(self, threshold: int = 2) -> None:
         self.threshold = threshold
 
-    def fit(self, X: pd.DataFrame, y: pd.Series | None = None) -> "DelinquencyRiskFlag":
+    def fit(self, X: pd.DataFrame, y: pd.Series | None = None) -> DelinquencyRiskFlag:
         return self
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:

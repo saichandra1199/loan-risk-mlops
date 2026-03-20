@@ -89,7 +89,7 @@ def download_via_requests(output_path: Path) -> None:
         "default+of+credit+card+clients.zip"
     )
 
-    print(f"Downloading from UCI ML Repository...")
+    print("Downloading from UCI ML Repository...")
     print(f"  URL: {UCI_URL}")
 
     response = requests.get(UCI_URL, timeout=120)

@@ -21,7 +21,6 @@ from pathlib import Path
 
 
 def run_ingest(input_path: str, cfg) -> str:
-    import polars as pl
     from loan_risk.data.ingestion import load_raw_data
 
     df = load_raw_data(input_path)
@@ -35,6 +34,7 @@ def run_ingest(input_path: str, cfg) -> str:
 
 def run_validate(parquet_path: str) -> None:
     import polars as pl
+
     from loan_risk.data.schemas import validate_raw
 
     df = pl.read_parquet(parquet_path)
@@ -44,6 +44,7 @@ def run_validate(parquet_path: str) -> None:
 
 def run_features(parquet_path: str, cfg) -> tuple[str, str]:
     import polars as pl
+
     from loan_risk.data.splits import stratified_split
     from loan_risk.features.pipeline import build_feature_pipeline, prepare_features, save_pipeline
 
@@ -86,6 +87,7 @@ def run_features(parquet_path: str, cfg) -> tuple[str, str]:
 
 def run_tune(processed_dir: str, model_name: str, n_trials: int, cfg) -> dict:
     import polars as pl
+
     from loan_risk.data.splits import DataSplits
     from loan_risk.tuning.search import run_hyperparameter_search
 
@@ -107,6 +109,7 @@ def run_tune(processed_dir: str, model_name: str, n_trials: int, cfg) -> dict:
 
 def run_train(processed_dir: str, model_name: str, best_params: dict, cfg):
     import polars as pl
+
     from loan_risk.data.splits import DataSplits
     from loan_risk.training.trainer import ModelTrainer
 
@@ -175,6 +178,7 @@ def run_evaluate(training_result, cfg) -> None:
 
 def run_monitor(cfg) -> None:
     import polars as pl
+
     from loan_risk.monitoring.alerts import run_monitoring_checks
     from loan_risk.monitoring.drift import generate_drift_report
 

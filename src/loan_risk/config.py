@@ -21,7 +21,6 @@ import yaml
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 
@@ -89,7 +88,7 @@ class Settings(BaseSettings):
     features: FeaturesConfig = FeaturesConfig()
 
     @classmethod
-    def from_yaml(cls, yaml_path: Path | None = None) -> "Settings":
+    def from_yaml(cls, yaml_path: Path | None = None) -> Settings:
         """Load settings from YAML file, then apply env var overrides."""
         path = yaml_path or (PROJECT_ROOT / "config" / "settings.yaml")
         if path.exists():

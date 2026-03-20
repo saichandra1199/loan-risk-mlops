@@ -6,9 +6,8 @@ import numpy as np
 import optuna
 from sklearn.metrics import roc_auc_score
 
-from loan_risk.features.pipeline import build_feature_pipeline, prepare_features
 from loan_risk.logging_setup import get_logger
-from loan_risk.training.models import compute_scale_pos_weight, get_model
+from loan_risk.training.models import get_model
 
 logger = get_logger(__name__)
 

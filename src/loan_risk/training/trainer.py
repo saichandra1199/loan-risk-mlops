@@ -9,9 +9,6 @@ from typing import Any
 import mlflow
 import mlflow.sklearn
 import numpy as np
-import polars as pl
-from sklearn.calibration import CalibratedClassifierCV
-from sklearn.pipeline import Pipeline
 
 from loan_risk.config import get_settings
 from loan_risk.data.splits import DataSplits

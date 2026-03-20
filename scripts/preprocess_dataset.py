@@ -37,15 +37,12 @@ import json
 import sys
 from pathlib import Path
 
+import pandas as pd
+import polars as pl
+
 
 def load_raw(input_path: Path):
     """Load the raw UCI CSV into a pandas DataFrame."""
-    try:
-        import pandas as pd
-    except ImportError:
-        print("ERROR: pandas not installed. Run: uv sync")
-        sys.exit(1)
-
     print(f"Loading raw data from: {input_path}")
     df = pd.read_csv(input_path, low_memory=False)
     print(f"  Loaded {len(df):,} rows × {len(df.columns)} columns")
@@ -57,7 +54,7 @@ def load_raw(input_path: Path):
     return df
 
 
-def derive_credit_score(df) -> "pd.Series":
+def derive_credit_score(df) -> pd.Series:
     """Derive a FICO-style credit score (300–850) from payment history.
 
     Logic:
@@ -68,7 +65,6 @@ def derive_credit_score(df) -> "pd.Series":
       - payment_reliability = fraction of months that were on time (PAY_X <= 0)
       - credit_score = 300 + 550 * payment_reliability → range [300, 850]
     """
-    import numpy as np
 
     # Payment status columns (note: UCI uses pay_0 for most recent, pay_2..6 for older)
     pay_cols = [c for c in df.columns if c.startswith("pay_") and c not in
@@ -89,7 +85,7 @@ def derive_credit_score(df) -> "pd.Series":
     return credit_score
 
 
-def derive_delinquencies(df) -> "pd.Series":
+def derive_delinquencies(df) -> pd.Series:
     """Count months with payment delay (PAY_X > 0)."""
     pay_cols = [c for c in df.columns if c.startswith("pay_") and
                 not c.startswith("pay_amt")]
@@ -101,7 +97,7 @@ def derive_delinquencies(df) -> "pd.Series":
     return delayed.clip(0, 50).astype(int)
 
 
-def derive_num_open_accounts(df) -> "pd.Series":
+def derive_num_open_accounts(df) -> pd.Series:
     """Count months where a payment was actually made (PAY_AMT > 0)."""
     pay_amt_cols = [c for c in df.columns if c.startswith("pay_amt")]
 
@@ -112,7 +108,7 @@ def derive_num_open_accounts(df) -> "pd.Series":
     return active.clip(1, 100).astype(int)
 
 
-def map_education_to_purpose(education_series) -> "pd.Series":
+def map_education_to_purpose(education_series) -> pd.Series:
     """Map UCI EDUCATION codes to loan purpose categories.
 
     UCI EDUCATION values:
@@ -142,7 +138,7 @@ def map_education_to_purpose(education_series) -> "pd.Series":
     return education_series.map(mapping).fillna("other")
 
 
-def map_marriage_to_ownership(marriage_series) -> "pd.Series":
+def map_marriage_to_ownership(marriage_series) -> pd.Series:
     """Map UCI MARRIAGE codes to home ownership categories.
 
     UCI MARRIAGE values:
@@ -164,14 +160,11 @@ def map_marriage_to_ownership(marriage_series) -> "pd.Series":
     return marriage_series.map(mapping).fillna("RENT")
 
 
-def preprocess(df) -> "pd.DataFrame":
+def preprocess(df) -> pd.DataFrame:
     """Apply all transformations to produce the canonical loan schema DataFrame.
 
     Returns a DataFrame with exactly the columns expected by RawLoanSchema.
     """
-    import numpy as np
-    import pandas as pd
-
     print("\nApplying feature transformations...")
     result = pd.DataFrame()
 
@@ -227,7 +220,7 @@ def preprocess(df) -> "pd.DataFrame":
         monthly_income = (annual_income / 12).replace(0, 1)
         dti = (bill_amt / monthly_income).clip(0, 2).round(4)
         result["debt_to_income_ratio"] = dti
-        print(f"  debt_to_income_ratio: BILL_AMT1 / (annual_income/12)")
+        print("  debt_to_income_ratio: BILL_AMT1 / (annual_income/12)")
     else:
         result["debt_to_income_ratio"] = 0.3
         print("  debt_to_income_ratio: bill columns not found, using 0.3")
@@ -302,7 +295,6 @@ def validate_output(df, output_path: Path) -> dict:
 
     Returns a validation report dict.
     """
-    import polars as pl
     sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
     from loan_risk.data.schemas import validate_raw
@@ -354,7 +346,6 @@ def validate_output(df, output_path: Path) -> dict:
     report_dir = Path("reports/validation")
     report_dir.mkdir(parents=True, exist_ok=True)
     report_path = report_dir / "validation_report.json"
-    import json
     report_path.write_text(json.dumps(report, indent=2))
     print(f"  Validation report saved to: {report_path}")
 
@@ -400,7 +391,6 @@ def main() -> None:
 
     # Save output
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    import polars as pl
     pl.from_pandas(processed_df).write_parquet(output_path)
     print(f"\nSaved preprocessed data to: {output_path}")
     print(f"  Rows: {len(processed_df):,}")

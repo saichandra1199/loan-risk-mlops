@@ -57,7 +57,7 @@ class EvaluationReport:
         return path
 
     @classmethod
-    def load(cls, path: str | Path) -> "EvaluationReport":
+    def load(cls, path: str | Path) -> EvaluationReport:
         """Load a report from a JSON file."""
         data = json.loads(Path(path).read_text())
         return cls(**data)

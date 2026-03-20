@@ -26,8 +26,8 @@ def ingest_data_task(input_path: str) -> str:
     Returns:
         Path to the saved Parquet file.
     """
-    from loan_risk.data.ingestion import load_raw_data
     from loan_risk.config import get_settings
+    from loan_risk.data.ingestion import load_raw_data
 
     cfg = get_settings()
     df = load_raw_data(input_path)
@@ -55,6 +55,7 @@ def validate_data_task(parquet_path: str) -> str:
         DataValidationError: On schema violation.
     """
     import polars as pl
+
     from loan_risk.data.schemas import validate_raw
 
     df = pl.read_parquet(parquet_path)
@@ -74,6 +75,7 @@ def engineer_features_task(parquet_path: str) -> tuple[str, str]:
         Tuple of (processed_dir, pipeline_path).
     """
     import polars as pl
+
     from loan_risk.config import get_settings
     from loan_risk.data.splits import stratified_split
     from loan_risk.features.pipeline import build_feature_pipeline, save_pipeline
@@ -135,6 +137,7 @@ def tune_hyperparameters_task(
         Best hyperparameters dict.
     """
     import polars as pl
+
     from loan_risk.config import get_settings
     from loan_risk.data.splits import DataSplits
     from loan_risk.tuning.search import run_hyperparameter_search
@@ -175,7 +178,9 @@ def train_model_task(
         TrainingResult serialised as dict.
     """
     import dataclasses
+
     import polars as pl
+
     from loan_risk.config import get_settings
     from loan_risk.data.splits import DataSplits
     from loan_risk.training.trainer import ModelTrainer
@@ -215,12 +220,10 @@ def evaluate_and_register_task(training_result: dict[str, Any]) -> dict[str, Any
     Returns:
         Dict with promoted flag, version, and report path.
     """
-    from loan_risk.config import get_settings
     from loan_risk.evaluation.report import EvaluationReport
     from loan_risk.exceptions import ModelPromotionError
     from loan_risk.registry.client import MLflowRegistryClient
 
-    cfg = get_settings()
     run_id = training_result["run_id"]
     test_auc = training_result["test_auc"]
     threshold = training_result["threshold"]
@@ -269,6 +272,7 @@ def run_monitoring_task(reference_path: str, current_path: str) -> dict[str, Any
         MonitoringResult summary dict.
     """
     import polars as pl
+
     from loan_risk.monitoring.alerts import run_monitoring_checks
     from loan_risk.monitoring.drift import generate_drift_report
 

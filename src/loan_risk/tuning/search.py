@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
-import numpy as np
 import optuna
-import polars as pl
 
 from loan_risk.config import get_settings
 from loan_risk.data.splits import DataSplits

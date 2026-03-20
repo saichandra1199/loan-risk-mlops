@@ -11,9 +11,8 @@ Usage:
 
 from __future__ import annotations
 
-import sys
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
 from fastapi import FastAPI
 
@@ -53,8 +52,6 @@ def create_app() -> FastAPI:
     Returns:
         Configured FastAPI app instance with all routes and middleware.
     """
-    cfg = get_settings()
-
     app = FastAPI(
         title="Loan Risk Prediction API",
         description=(
