@@ -67,9 +67,10 @@ class TestCreditScoreBinner:
         assert "credit_score_band" in out.columns
 
     def test_poor_credit_band(self) -> None:
+        # 500 < 580, so falls in the first bin: "Poor"
         df = pd.DataFrame({"credit_score": [500]})
         out = CreditScoreBinner().fit_transform(df)
-        assert out["credit_score_band"].iloc[0] == "Fair"
+        assert out["credit_score_band"].iloc[0] == "Poor"
 
     def test_exceptional_credit_band(self) -> None:
         df = pd.DataFrame({"credit_score": [820]})
