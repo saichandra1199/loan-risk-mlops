@@ -45,9 +45,26 @@ resource "aws_s3_bucket_public_access_block" "mlflow" {
 }
 
 # Versioning on all buckets
-resource "aws_s3_bucket_versioning" "data"      { bucket = aws_s3_bucket.data.id;      versioning_configuration { status = "Enabled" } }
-resource "aws_s3_bucket_versioning" "artifacts" { bucket = aws_s3_bucket.artifacts.id; versioning_configuration { status = "Enabled" } }
-resource "aws_s3_bucket_versioning" "mlflow"    { bucket = aws_s3_bucket.mlflow.id;    versioning_configuration { status = "Enabled" } }
+resource "aws_s3_bucket_versioning" "data" {
+  bucket = aws_s3_bucket.data.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_versioning" "artifacts" {
+  bucket = aws_s3_bucket.artifacts.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_versioning" "mlflow" {
+  bucket = aws_s3_bucket.mlflow.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
 
 # Server-side encryption
 resource "aws_s3_bucket_server_side_encryption_configuration" "data" {
