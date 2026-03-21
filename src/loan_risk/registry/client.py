@@ -141,6 +141,28 @@ class SageMakerRegistryClient:
         import boto3  # noqa: PLC0415
         return boto3.client("sagemaker", region_name=self._region)
 
+    def _get_xgboost_image(self) -> str:
+        """Return the SageMaker XGBoost built-in container URI for the configured region."""
+        try:
+            import sagemaker  # noqa: PLC0415
+            return sagemaker.image_uris.retrieve(
+                framework="xgboost",
+                region=self._region,
+                version="1.7-1",
+            )
+        except Exception:
+            # Fallback: construct URI using known SageMaker account IDs per region
+            account_map = {
+                "ap-south-1":    "720646828776",
+                "us-east-1":     "683313688378",
+                "us-west-2":     "246618743249",
+                "eu-west-1":     "141502667606",
+                "ap-southeast-1": "475088953585",
+                "ap-northeast-1": "501404015308",
+            }
+            account = account_map.get(self._region, "720646828776")
+            return f"{account}.dkr.ecr.{self._region}.amazonaws.com/sagemaker-xgboost:1.7-1"
+
     def promote_to_sagemaker_registry(
         self,
         model_uri: str,
@@ -166,7 +188,7 @@ class SageMakerRegistryClient:
             "ModelApprovalStatus": approval_status,
             "InferenceSpecification": {
                 "Containers": [{
-                    "Image": inference_image or "763104351884.dkr.ecr.us-east-1.amazonaws.com/xgboost:1.7-1",
+                    "Image": inference_image or self._get_xgboost_image(),
                     "ModelDataUrl": model_uri,
                 }],
                 "SupportedContentTypes": ["application/json"],

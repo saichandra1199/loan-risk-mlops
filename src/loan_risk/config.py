@@ -72,7 +72,7 @@ class FeaturesConfig(BaseModel):
 
 
 class AWSConfig(BaseModel):
-    region: str = "us-east-1"
+    region: str = "ap-south-1"
     data_bucket: str = "loan-risk-data"
     artifacts_bucket: str = "loan-risk-artifacts"
     mlflow_bucket: str = "loan-risk-mlflow"

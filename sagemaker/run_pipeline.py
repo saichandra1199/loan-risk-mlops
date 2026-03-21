@@ -17,7 +17,7 @@ import time
 import boto3
 
 PIPELINE_NAME = "loan-risk-training-pipeline"
-REGION = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
+REGION = os.environ.get("AWS_DEFAULT_REGION", "ap-south-1")
 
 
 def _get_client() -> boto3.client:

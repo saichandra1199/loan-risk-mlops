@@ -148,7 +148,7 @@ You will be prompted for:
 ```
 AWS Access Key ID:      <paste your Access Key ID>
 AWS Secret Access Key:  <paste your Secret Access Key>
-Default region name:    us-east-1
+Default region name:    ap-south-1
 Default output format:  json
 ```
 
@@ -228,7 +228,7 @@ Click the **"Variables"** tab → **"New repository variable"** for each:
 
 | Variable Name | Value |
 |---------------|-------|
-| `AWS_REGION` | `us-east-1` |
+| `AWS_REGION` | `ap-south-1` |
 | `AWS_DATA_BUCKET` | `loan-risk-data-<your-account-id>` (replace with your account ID from bootstrap output) |
 | `AWS_ARTIFACTS_BUCKET` | `loan-risk-artifacts-<your-account-id>` |
 | `ECS_CLUSTER` | `loan-risk-cluster` |
@@ -314,13 +314,13 @@ aws ecs update-service \
   --cluster loan-risk-cluster \
   --service loan-risk-serving \
   --force-new-deployment \
-  --region us-east-1
+  --region ap-south-1
 
 # Wait for it to stabilise (2–3 minutes)
 aws ecs wait services-stable \
   --cluster loan-risk-cluster \
   --services loan-risk-serving \
-  --region us-east-1
+  --region ap-south-1
 
 echo "ECS service is running!"
 ```
@@ -337,7 +337,7 @@ Or from your terminal:
 cd /path/to/your/loan-risk-mlops
 
 # First, upsert the pipeline definition to SageMaker
-export AWS_DEFAULT_REGION=us-east-1
+export AWS_DEFAULT_REGION=ap-south-1
 export SAGEMAKER_ROLE_ARN=$(cd infra/terraform && terraform output -raw sagemaker_execution_role_arn)
 export AWS_DATA_BUCKET=loan-risk-data-$(aws sts get-caller-identity --query Account --output text)
 export AWS_ARTIFACTS_BUCKET=loan-risk-artifacts-$(aws sts get-caller-identity --query Account --output text)
@@ -451,7 +451,7 @@ terraform apply -var="db_password=MyDb@Pass123!"
 
 ---
 
-## Cost Breakdown (us-east-1, approximate monthly)
+## Cost Breakdown (ap-south-1 / Mumbai, approximate monthly)
 
 | Service | What it does | Cost/month |
 |---------|-------------|-----------|

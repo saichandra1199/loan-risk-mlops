@@ -9,9 +9,9 @@ terraform {
   }
 
   backend "s3" {
-    bucket         = "loan-risk-tf-state"
+    bucket         = "loan-risk-tf-state-512491905847"
     key            = "prod/terraform.tfstate"
-    region         = "us-east-1"
+    region         = "ap-south-1"
     dynamodb_table = "loan-risk-tf-locks"
     encrypt        = true
   }

@@ -3,7 +3,7 @@
 Usage:
     python sagemaker/scripts/promote.py \
         --metrics-path s3://loan-risk-artifacts/evaluation/evaluation_report.json \
-        --model-package-arn arn:aws:sagemaker:us-east-1:123456789:model-package/loan-risk-classifier/1 \
+        --model-package-arn arn:aws:sagemaker:ap-south-1:123456789:model-package/loan-risk-classifier/1 \
         --mlflow-run-id abc123
 """
 
@@ -22,7 +22,7 @@ def load_metrics(metrics_path: str) -> dict:
     """Load evaluation metrics from S3 or local path."""
     if metrics_path.startswith("s3://"):
         import boto3  # noqa: PLC0415
-        s3 = boto3.client("s3", region_name=os.environ.get("AWS_DEFAULT_REGION", "us-east-1"))
+        s3 = boto3.client("s3", region_name=os.environ.get("AWS_DEFAULT_REGION", "ap-south-1"))
         bucket, key = metrics_path[5:].split("/", 1)
         obj = s3.get_object(Bucket=bucket, Key=key)
         return json.loads(obj["Body"].read())
@@ -38,7 +38,7 @@ def promote_sagemaker_model(model_package_arn: str, auc: float, threshold: float
         print(f"AUC {auc:.4f} < threshold {threshold:.4f} — not promoting")
         return False
 
-    client = boto3.client("sagemaker", region_name=os.environ.get("AWS_DEFAULT_REGION", "us-east-1"))
+    client = boto3.client("sagemaker", region_name=os.environ.get("AWS_DEFAULT_REGION", "ap-south-1"))
     client.update_model_package(
         ModelPackageArn=model_package_arn,
         ModelApprovalStatus="Approved",

@@ -15,7 +15,7 @@
 set -euo pipefail
 
 # ── Configuration — edit these ────────────────────────────────────────────────
-AWS_REGION="${AWS_DEFAULT_REGION:-us-east-1}"
+AWS_REGION="${AWS_DEFAULT_REGION:-ap-south-1}"
 GITHUB_ORG="saichandra1199"           # your GitHub username or org
 GITHUB_REPO="loan-risk-mlops"         # your GitHub repo name
 PROJECT="loan-risk"

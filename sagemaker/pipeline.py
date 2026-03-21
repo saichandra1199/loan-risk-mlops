@@ -59,7 +59,7 @@ XGBOOST_VERSION = "1.7-1"
 def _get_config() -> dict:
     """Read AWS config from environment variables or defaults."""
     return {
-        "region": os.environ.get("AWS_DEFAULT_REGION", "us-east-1"),
+        "region": os.environ.get("AWS_DEFAULT_REGION", "ap-south-1"),
         "role_arn": os.environ.get("SAGEMAKER_ROLE_ARN", ""),
         "data_bucket": os.environ.get("AWS_DATA_BUCKET", f"{PROJECT_NAME}-data"),
         "artifacts_bucket": os.environ.get("AWS_ARTIFACTS_BUCKET", f"{PROJECT_NAME}-artifacts"),

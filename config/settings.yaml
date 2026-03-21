@@ -41,7 +41,7 @@ features:
     - "loan_amount"
 
 aws:
-  region: us-east-1
+  region: ap-south-1
   data_bucket: loan-risk-data                   # overridden by AWS_DATA_BUCKET env var
   artifacts_bucket: loan-risk-artifacts         # overridden by AWS_ARTIFACTS_BUCKET env var
   mlflow_bucket: loan-risk-mlflow
