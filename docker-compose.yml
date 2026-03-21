@@ -1,3 +1,12 @@
+# LOCAL DEVELOPMENT ONLY
+# ========================
+# This compose file runs a minimal local stack for development and testing.
+# In production, use ECS Fargate (see ecs/task-definition.json) and
+# CloudWatch for metrics (Prometheus is no longer used in production).
+#
+# Start:  docker-compose up -d
+# Stop:   docker-compose down
+
 version: "3.9"
 
 services:
@@ -19,28 +28,8 @@ services:
       timeout: 10s
       retries: 3
 
-  prefect-server:
-    image: prefecthq/prefect:3-latest
-    ports:
-      - "4200:4200"
-    environment:
-      PREFECT_SERVER_API_HOST: "0.0.0.0"
-      PREFECT_SERVER_API_PORT: "4200"
-    volumes:
-      - prefect_data:/root/.prefect
-    command: prefect server start
-
-  prometheus:
-    image: prom/prometheus:v2.52.0
-    ports:
-      - "9090:9090"
-    volumes:
-      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus_data:/prometheus
-    command:
-      - "--config.file=/etc/prometheus/prometheus.yml"
-      - "--storage.tsdb.path=/prometheus"
-
+  # Optional: Grafana for local dashboard development.
+  # In production, use CloudWatch Dashboards (config/cloudwatch_dashboard.json).
   grafana:
     image: grafana/grafana:10.4.0
     ports:
@@ -50,11 +39,9 @@ services:
       GF_USERS_ALLOW_SIGN_UP: "false"
     volumes:
       - grafana_data:/var/lib/grafana
-    depends_on:
-      - prometheus
+    profiles:
+      - monitoring
 
 volumes:
   mlflow_data:
-  prefect_data:
-  prometheus_data:
   grafana_data:

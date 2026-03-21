@@ -1,0 +1,60 @@
+{
+  "family": "loan-risk-serving",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "1024",
+  "memory": "2048",
+  "taskRoleArn": "${ECS_TASK_ROLE_ARN}",
+  "executionRoleArn": "${ECS_EXECUTION_ROLE_ARN}",
+  "containerDefinitions": [
+    {
+      "name": "serving",
+      "image": "${ECR_IMAGE_URI}",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 8000,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        { "name": "AWS_DEFAULT_REGION",       "value": "${AWS_REGION}" },
+        { "name": "AWS_DATA_BUCKET",          "value": "${AWS_DATA_BUCKET}" },
+        { "name": "AWS_ARTIFACTS_BUCKET",     "value": "${AWS_ARTIFACTS_BUCKET}" },
+        { "name": "AWS_CLOUDWATCH_NAMESPACE", "value": "LoanRisk" },
+        { "name": "PYTHONPATH",               "value": "/app/src" },
+        { "name": "PYTHONUNBUFFERED",         "value": "1" }
+      ],
+      "secrets": [
+        {
+          "name": "MLFLOW_TRACKING_URI",
+          "valueFrom": "${MLFLOW_SECRET_ARN}:MLFLOW_TRACKING_URI::"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/loan-risk-serving",
+          "awslogs-region": "${AWS_REGION}",
+          "awslogs-stream-prefix": "ecs"
+        }
+      },
+      "healthCheck": {
+        "command": [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""
+        ],
+        "interval": 30,
+        "timeout": 10,
+        "retries": 3,
+        "startPeriod": 60
+      },
+      "readonlyRootFilesystem": false,
+      "stopTimeout": 30
+    }
+  ],
+  "tags": [
+    { "key": "Project",     "value": "loan-risk" },
+    { "key": "ManagedBy",   "value": "terraform" }
+  ]
+}

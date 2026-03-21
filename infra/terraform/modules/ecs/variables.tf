@@ -1,0 +1,12 @@
+variable "project_name"         { type = string }
+variable "environment"          { type = string }
+variable "aws_region"           { type = string }
+variable "ecr_image_uri"        { type = string }
+variable "ecs_task_role_arn"    { type = string }
+variable "ecs_exec_role_arn"    { type = string }
+variable "private_subnet_ids"   { type = list(string) }
+variable "ecs_sg_id"            { type = string }
+variable "alb_target_group_arn" { type = string }
+variable "mlflow_secret_arn"    { type = string }
+variable "data_bucket"          { type = string }
+variable "artifacts_bucket"     { type = string }

@@ -1,28 +1,26 @@
 # Training Pipeline Workflow
 # ==========================
-# This workflow runs the FULL ML training pipeline using DVC.
+# Triggers a SageMaker Pipeline execution (replaces DVC + GitHub-hosted runner).
 #
 # What it does:
-#   1. Downloads the UCI Credit Card Default dataset
-#   2. Preprocesses it (maps UCI columns → our feature schema)
-#   3. Engineers features (splits data, fits sklearn transformers)
-#   4. Trains a LightGBM model
-#   5. Evaluates the model (AUC, Gini, KS statistic)
-#   6. Logs everything to MLflow (SQLite backend — no server needed)
-#   7. Publishes metrics to the GitHub Actions job summary
-#   8. Uploads training reports as downloadable artifacts
+#   1. Authenticates to AWS via OIDC
+#   2. Upserts the SageMaker Pipeline definition (from sagemaker/pipeline.py)
+#   3. Starts a pipeline execution and waits for completion
+#   4. Publishes metrics summary to GitHub Actions job summary
 #
 # When does this run?
-#   - Manually: Go to Actions → Training Pipeline → Run workflow
-#   - Automatically: Every Sunday at 02:00 UTC (weekly retraining)
+#   - Manually: Actions → Training Pipeline → Run workflow
+#   - Automatically: Every Sunday at 02:00 UTC (weekly retraining with HPO)
 #
-# Approximate runtime: 5-10 minutes (depends on dataset download speed)
+# Required GitHub Actions secrets:
+#   AWS_ROLE_ARN              — IAM role ARN for SageMaker execution
+# Required GitHub Actions variables:
+#   AWS_REGION                — default: us-east-1
+#   SAGEMAKER_ROLE_ARN        — IAM role for SageMaker Pipeline steps
 
-name: Training Pipeline (DVC)
+name: Training Pipeline (SageMaker)
 
 on:
-  # Allow manual triggering from the GitHub Actions UI
-  # You can override parameters here
   workflow_dispatch:
     inputs:
       model_name:
@@ -34,36 +32,34 @@ on:
           - lgbm
           - xgboost
       n_trials:
-        description: "Optuna tuning trials (0 = skip tuning)"
+        description: "HPO trials (0 = skip tuning)"
         required: false
         default: "0"
         type: string
       skip_tuning:
         description: "Skip hyperparameter tuning"
         required: false
-        default: "true"
+        default: true
         type: boolean
 
-  # Automatic weekly retraining: every Sunday at 02:00 UTC
   schedule:
-    - cron: "0 2 * * 0"
+    - cron: "0 2 * * 0"   # Sundays 02:00 UTC — weekly retrain with HPO
 
-# Only allow one training run at a time (prevent conflicting MLflow writes)
 concurrency:
   group: training
   cancel-in-progress: false
 
 jobs:
-  train:
-    name: Full DVC Pipeline
+  trigger-sagemaker:
+    name: Trigger SageMaker Pipeline
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 120
+
+    permissions:
+      id-token: write
+      contents: read
 
     steps:
-      # ----------------------------------------------------------------
-      # Setup
-      # ----------------------------------------------------------------
-
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -81,120 +77,95 @@ jobs:
       - name: Install Python dependencies
         run: uv sync --extra dev
 
-      # Install DVC (the pipeline orchestrator / data versioning tool)
-      - name: Install DVC
-        run: uv run pip install "dvc>=3.50.0"
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
 
-      # Create directories that the pipeline needs
-      - name: Create required directories
-        run: |
-          mkdir -p data/raw data/processed data/reference data/monitoring
-          mkdir -p artifacts/best_params
-          mkdir -p reports/evaluation reports/monitoring reports/validation
-
-      # ----------------------------------------------------------------
-      # Run the DVC Pipeline
-      # ----------------------------------------------------------------
-
-      - name: Run DVC pipeline (dvc repro)
+      - name: Upsert SageMaker Pipeline definition
         env:
-          # Use SQLite as MLflow backend — no server needed in CI
-          MLFLOW_TRACKING_URI: "sqlite:///mlruns.db"
-          MLFLOW__TRACKING_URI: "sqlite:///mlruns.db"
-          # Reduce experiment scale for CI (faster runs)
-          TRAINING__N_TRIALS: "0"
+          AWS_DEFAULT_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+          SAGEMAKER_ROLE_ARN: ${{ vars.SAGEMAKER_ROLE_ARN }}
+          AWS_DATA_BUCKET: ${{ vars.AWS_DATA_BUCKET }}
+          AWS_ARTIFACTS_BUCKET: ${{ vars.AWS_ARTIFACTS_BUCKET }}
           PYTHONPATH: "src"
         run: |
-          echo "=== Starting DVC Pipeline ==="
-          echo "This will run 4 stages:"
-          echo "  1. download   — fetch UCI dataset"
-          echo "  2. preprocess — map UCI columns to loan schema"
-          echo "  3. featurize  — engineer features, split data"
-          echo "  4. train      — train LightGBM + evaluate"
-          echo ""
+          uv run python sagemaker/pipeline.py --upsert
 
-          # dvc repro runs only the stages that have changed
-          # --no-lock allows parallel runs without lock file conflicts
-          uv run dvc repro --no-lock 2>&1 | tee pipeline_output.txt
-
-          echo "=== DVC Pipeline Complete ==="
-
-      # ----------------------------------------------------------------
-      # Metrics and Reporting
-      # ----------------------------------------------------------------
-
-      - name: Display metrics
-        if: always()
+      - name: Start pipeline execution
+        id: start-execution
+        env:
+          AWS_DEFAULT_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+          PYTHONPATH: "src"
         run: |
-          if [ -f "reports/evaluation/metrics.json" ]; then
-            echo "## Model Training Metrics" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
-            echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          SKIP_TUNING="${{ github.event.inputs.skip_tuning || 'true' }}"
+          N_TRIALS="${{ github.event.inputs.n_trials || '0' }}"
+          MODEL_TYPE="${{ github.event.inputs.model_name || 'lgbm' }}"
 
-            # Parse metrics.json and display in GitHub summary
-            python3 -c "
-          import json, sys
-          metrics = json.load(open('reports/evaluation/metrics.json'))
+          # Weekly cron: enable HPO
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            SKIP_TUNING="false"
+            N_TRIALS="50"
+          fi
+
+          uv run python sagemaker/pipeline.py --upsert --execute \
+            --model-type "$MODEL_TYPE" \
+            $([ "$SKIP_TUNING" = "true" ] && echo "--skip-tuning" || echo "") \
+            --n-trials "$N_TRIALS" 2>&1 | tee execution_output.txt
+
+          # Extract execution ARN
+          EXECUTION_ARN=$(grep -o 'arn:aws:sagemaker:[^[:space:]]*' execution_output.txt | head -1)
+          echo "execution_arn=$EXECUTION_ARN" >> $GITHUB_OUTPUT
+          echo "Execution ARN: $EXECUTION_ARN"
+
+      - name: Wait for pipeline completion
+        env:
+          AWS_DEFAULT_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+          PYTHONPATH: "src"
+        run: |
+          EXECUTION_ARN="${{ steps.start-execution.outputs.execution_arn }}"
+          if [ -z "$EXECUTION_ARN" ]; then
+            echo "No execution ARN captured — skipping wait"
+            exit 0
+          fi
+          uv run python sagemaker/run_pipeline.py status "$EXECUTION_ARN"
+
+      - name: Fetch and display metrics
+        if: always()
+        env:
+          AWS_DEFAULT_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+        run: |
+          echo "## SageMaker Pipeline Execution" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- Execution ARN: \`${{ steps.start-execution.outputs.execution_arn }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Model type: \`${{ github.event.inputs.model_name || 'lgbm' }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Skip tuning: \`${{ github.event.inputs.skip_tuning || 'true' }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Attempt to download evaluation report from S3
+          BUCKET="${{ vars.AWS_ARTIFACTS_BUCKET }}"
+          if [ -n "$BUCKET" ]; then
+            aws s3 cp "s3://$BUCKET/evaluation/metrics.json" metrics.json 2>/dev/null || true
+            if [ -f "metrics.json" ]; then
+              echo "### Model Metrics" >> $GITHUB_STEP_SUMMARY
+              echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+              echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+              python3 -c "
+          import json
+          metrics = json.load(open('metrics.json'))
           for key, value in metrics.items():
               if isinstance(value, float):
                   print(f'| {key} | {value:.4f} |')
               else:
                   print(f'| {key} | {value} |')
-            " >> $GITHUB_STEP_SUMMARY
-
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "Run ID: \`$(cat artifacts/last_training_result.json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get(\"run_id\", \"unknown\")[:8])')\`" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "metrics.json not found — training may have failed" >> $GITHUB_STEP_SUMMARY
+              " >> $GITHUB_STEP_SUMMARY
+            fi
           fi
-
-      - name: Show DVC metrics
-        if: always()
-        run: |
-          echo "=== DVC Metrics ==="
-          uv run dvc metrics show 2>/dev/null || echo "No DVC metrics available"
-
-      - name: Show DVC pipeline DAG
-        if: always()
-        run: |
-          echo "=== Pipeline DAG ==="
-          uv run dvc dag 2>/dev/null || echo "DVC dag not available"
-
-      # ----------------------------------------------------------------
-      # Upload artifacts
-      # ----------------------------------------------------------------
-
-      - name: Upload training reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: training-reports-${{ github.run_number }}
-          path: |
-            reports/
-            artifacts/last_training_result.json
-          retention-days: 30
-
-      - name: Upload validation report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: validation-report-${{ github.run_number }}
-          path: reports/validation/
-          retention-days: 30
-
-      # ----------------------------------------------------------------
-      # Failure notifications
-      # ----------------------------------------------------------------
 
       - name: Report failure
         if: failure()
         run: |
           echo "## Pipeline Failed" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "The training pipeline failed. Check the logs above for details." >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Common issues:" >> $GITHUB_STEP_SUMMARY
-          echo "- Dataset download failed (network issue)" >> $GITHUB_STEP_SUMMARY
-          echo "- Schema validation failed (data format changed)" >> $GITHUB_STEP_SUMMARY
-          echo "- Model training failed (insufficient data or memory)" >> $GITHUB_STEP_SUMMARY
+          echo "Check the SageMaker console for detailed logs." >> $GITHUB_STEP_SUMMARY
+          echo "Execution ARN: ${{ steps.start-execution.outputs.execution_arn }}" >> $GITHUB_STEP_SUMMARY

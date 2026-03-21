@@ -2,6 +2,9 @@
 
 Loan defaults are typically known 30-90 days after origination.
 When labels arrive, this module computes live AUC against logged predictions.
+
+Prediction logs are written to S3 when AWS config is available;
+falls back to local parquet file otherwise.
 """
 
 from __future__ import annotations
@@ -20,6 +23,76 @@ from loan_risk.logging_setup import get_logger
 logger = get_logger(__name__)
 
 
+def _s3_log_path(cfg) -> str:
+    """Return today's S3 prediction log path."""
+    date_prefix = datetime.datetime.utcnow().strftime("%Y/%m/%d")
+    return (
+        f"s3://{cfg.aws.data_bucket}/"
+        f"{cfg.aws.prediction_log_prefix}{date_prefix}/predictions.parquet"
+    )
+
+
+def _write_to_s3(df: pl.DataFrame, s3_path: str) -> None:
+    """Write or append a Polars DataFrame to S3 as parquet (read-modify-write)."""
+    import io  # noqa: PLC0415
+
+    import boto3  # noqa: PLC0415
+
+    parts = s3_path[5:].split("/", 1)
+    bucket, key = parts[0], parts[1]
+
+    s3 = boto3.client("s3", region_name=get_settings().aws.region)
+
+    # Read existing data if present
+    try:
+        obj = s3.get_object(Bucket=bucket, Key=key)
+        existing = pl.read_parquet(io.BytesIO(obj["Body"].read()))
+        combined = pl.concat([existing, df], how="diagonal")
+    except s3.exceptions.NoSuchKey:
+        combined = df
+    except Exception:
+        combined = df
+
+    buf = io.BytesIO()
+    combined.write_parquet(buf)
+    buf.seek(0)
+    s3.put_object(Bucket=bucket, Key=key, Body=buf.getvalue())
+
+
+def _read_from_s3(s3_path: str) -> pl.DataFrame | None:
+    """Read a parquet file from S3; return None if not found."""
+    import io  # noqa: PLC0415
+
+    import boto3  # noqa: PLC0415
+
+    parts = s3_path[5:].split("/", 1)
+    bucket, key = parts[0], parts[1]
+    s3 = boto3.client("s3", region_name=get_settings().aws.region)
+    try:
+        obj = s3.get_object(Bucket=bucket, Key=key)
+        return pl.read_parquet(io.BytesIO(obj["Body"].read()))
+    except Exception:
+        return None
+
+
+def _emit_auc_to_cloudwatch(live_auc: float) -> None:
+    """Emit LiveAUC metric to CloudWatch. Best-effort."""
+    try:
+        import boto3  # noqa: PLC0415
+        cfg = get_settings()
+        cw = boto3.client("cloudwatch", region_name=cfg.aws.region)
+        cw.put_metric_data(
+            Namespace=cfg.aws.cloudwatch_namespace,
+            MetricData=[{
+                "MetricName": "LiveAUC",
+                "Value": live_auc,
+                "Unit": "None",
+            }],
+        )
+    except Exception as exc:
+        logger.warning("cloudwatch_auc_emit_failed", error=str(exc))
+
+
 def log_prediction(
     loan_id: str,
     default_probability: float,
@@ -29,7 +102,7 @@ def log_prediction(
 ) -> None:
     """Append a prediction to the monitoring log.
 
-    The log is used later when ground-truth labels arrive to compute live AUC.
+    Writes to S3 if AWS config is available, else local parquet.
 
     Args:
         loan_id: Unique loan identifier.
@@ -39,9 +112,6 @@ def log_prediction(
         timestamp: ISO timestamp (auto-generated if None).
     """
     cfg = get_settings()
-    log_path = Path(cfg.monitoring.prediction_log_path)
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-
     timestamp = timestamp or datetime.datetime.utcnow().isoformat()
 
     new_row = pl.DataFrame(
@@ -51,7 +121,7 @@ def log_prediction(
             "model_version": [model_version],
             "request_id": [request_id],
             "timestamp": [timestamp],
-            "actual_default": [None],  # filled in when labels arrive
+            "actual_default": [None],
         },
         schema={
             "loan_id": pl.Utf8,
@@ -63,12 +133,22 @@ def log_prediction(
         },
     )
 
+    # Try S3 first; fall back to local file
+    if cfg.aws.data_bucket and cfg.aws.data_bucket != "loan-risk-data":
+        try:
+            _write_to_s3(new_row, _s3_log_path(cfg))
+            return
+        except Exception as exc:
+            logger.warning("s3_log_write_failed_falling_back", error=str(exc))
+
+    # Local fallback
+    log_path = Path(cfg.monitoring.prediction_log_path)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
     if log_path.exists():
         existing = pl.read_parquet(log_path)
         combined = pl.concat([existing, new_row], how="diagonal")
     else:
         combined = new_row
-
     combined.write_parquet(log_path)
 
 
@@ -96,7 +176,6 @@ def update_ground_truth(
 
     log_df = pl.read_parquet(log_path)
 
-    # Join on loan_id
     labels_renamed = labels.select(
         pl.col(loan_id_column).alias("loan_id"),
         pl.col(label_column).cast(pl.Int32).alias("actual_default"),
@@ -120,6 +199,8 @@ def update_ground_truth(
 
 def compute_live_auc(min_samples: int = 100) -> dict[str, Any]:
     """Compute live AUC from the prediction log where labels have arrived.
+
+    Reads from local file; emits result to CloudWatch.
 
     Args:
         min_samples: Minimum labeled samples required to compute AUC.
@@ -155,6 +236,9 @@ def compute_live_auc(min_samples: int = 100) -> dict[str, Any]:
     model_versions = labeled["model_version"].unique().to_list()
 
     logger.info("live_auc_computed", live_auc=live_auc, n_labeled=len(labeled))
+
+    # Emit to CloudWatch
+    _emit_auc_to_cloudwatch(live_auc)
 
     return {
         "live_auc": round(live_auc, 4),

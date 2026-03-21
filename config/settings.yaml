@@ -1,5 +1,5 @@
 mlflow:
-  tracking_uri: "http://localhost:5000"
+  tracking_uri: "${MLFLOW_TRACKING_URI:-sqlite:///mlruns.db}"  # env override for AWS RDS
   experiment_name: "loan-risk"
   registered_model_name: "loan-risk-classifier"
 
@@ -39,3 +39,13 @@ features:
   log_transform_columns:
     - "annual_income"
     - "loan_amount"
+
+aws:
+  region: us-east-1
+  data_bucket: loan-risk-data                   # overridden by AWS_DATA_BUCKET env var
+  artifacts_bucket: loan-risk-artifacts         # overridden by AWS_ARTIFACTS_BUCKET env var
+  mlflow_bucket: loan-risk-mlflow
+  cloudwatch_namespace: LoanRisk
+  sagemaker_model_package_group: loan-risk-classifier
+  prediction_log_prefix: "monitoring/predictions/"
+  sns_alert_topic_arn: ""                       # set via env var or Secrets Manager

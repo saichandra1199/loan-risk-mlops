@@ -71,6 +71,17 @@ class FeaturesConfig(BaseModel):
     log_transform_columns: list[str] = ["annual_income", "loan_amount"]
 
 
+class AWSConfig(BaseModel):
+    region: str = "us-east-1"
+    data_bucket: str = "loan-risk-data"
+    artifacts_bucket: str = "loan-risk-artifacts"
+    mlflow_bucket: str = "loan-risk-mlflow"
+    cloudwatch_namespace: str = "LoanRisk"
+    sagemaker_model_package_group: str = "loan-risk-classifier"
+    prediction_log_prefix: str = "monitoring/predictions/"
+    sns_alert_topic_arn: str = ""
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=str(PROJECT_ROOT / ".env"),
@@ -86,6 +97,7 @@ class Settings(BaseSettings):
     monitoring: MonitoringConfig = MonitoringConfig()
     data: DataConfig = DataConfig()
     features: FeaturesConfig = FeaturesConfig()
+    aws: AWSConfig = AWSConfig()
 
     @classmethod
     def from_yaml(cls, yaml_path: Path | None = None) -> Settings:

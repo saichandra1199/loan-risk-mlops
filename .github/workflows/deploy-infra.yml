@@ -1,0 +1,107 @@
+# Infrastructure Deployment Workflow
+# ====================================
+# Manual dispatch: run Terraform plan or apply for infrastructure changes.
+#
+# Required GitHub Actions secrets:
+#   AWS_ROLE_ARN — IAM role with Terraform permissions
+#   TF_DB_PASSWORD — RDS master password
+# Required GitHub Actions variables:
+#   AWS_REGION — default: us-east-1
+
+name: Deploy Infrastructure (Terraform)
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Terraform action"
+        required: true
+        default: "plan"
+        type: choice
+        options:
+          - plan
+          - apply
+      environment:
+        description: "Target environment"
+        required: false
+        default: "prod"
+        type: choice
+        options:
+          - prod
+          - staging
+
+concurrency:
+  group: terraform-${{ github.event.inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  terraform:
+    name: Terraform ${{ github.event.inputs.action }} (${{ github.event.inputs.environment }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      id-token: write
+      contents: read
+
+    defaults:
+      run:
+        working-directory: infra/terraform
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.6"
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        id: plan
+        env:
+          TF_VAR_db_password: ${{ secrets.TF_DB_PASSWORD }}
+          TF_VAR_environment: ${{ github.event.inputs.environment }}
+          TF_VAR_alert_email: ${{ vars.ALERT_EMAIL }}
+        run: |
+          terraform plan \
+            -var="aws_region=${{ vars.AWS_REGION || 'us-east-1' }}" \
+            -out=tfplan \
+            -no-color 2>&1 | tee plan_output.txt
+          echo "### Terraform Plan" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          tail -50 plan_output.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Terraform Apply
+        if: github.event.inputs.action == 'apply'
+        env:
+          TF_VAR_db_password: ${{ secrets.TF_DB_PASSWORD }}
+          TF_VAR_environment: ${{ github.event.inputs.environment }}
+          TF_VAR_alert_email: ${{ vars.ALERT_EMAIL }}
+        run: |
+          terraform apply -auto-approve tfplan 2>&1 | tee apply_output.txt
+          echo "### Terraform Apply" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          tail -30 apply_output.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Capture outputs
+        if: github.event.inputs.action == 'apply'
+        run: |
+          echo "### Infrastructure Outputs" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          terraform output -no-color >> $GITHUB_STEP_SUMMARY 2>&1 || true
+          echo '```' >> $GITHUB_STEP_SUMMARY

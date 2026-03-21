@@ -1,4 +1,6 @@
 # Multi-stage build for the loan risk inference service
+# Deployed to ECS Fargate via ECR (see ecs/task-definition.json and infra/terraform/).
+# Runtime deps include boto3 for CloudWatch metrics and S3 prediction logging.
 # Stage 1: dependency builder
 FROM python:3.11-slim AS builder
 

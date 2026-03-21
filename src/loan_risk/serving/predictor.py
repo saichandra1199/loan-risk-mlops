@@ -4,7 +4,7 @@ The predictor handles:
 - Lazy model loading (first request or explicit warm-up)
 - Feature pipeline application
 - SHAP value computation for real-time explainability
-- Prometheus metric tracking
+- CloudWatch metric tracking (replaces Prometheus)
 """
 
 from __future__ import annotations
@@ -15,7 +15,6 @@ from typing import Any
 
 import polars as pl
 import shap
-from prometheus_client import Counter, Histogram
 
 from loan_risk.config import get_settings
 from loan_risk.evaluation.explainability import get_top_shap_factors
@@ -34,22 +33,55 @@ from loan_risk.serving.schemas import (
 
 logger = get_logger(__name__)
 
-# Prometheus metrics
-PREDICTION_COUNTER = Counter(
-    "loan_risk_predictions_total",
-    "Total predictions served",
-    ["prediction", "risk_tier"],
-)
-PREDICTION_LATENCY = Histogram(
-    "loan_risk_prediction_latency_seconds",
-    "Prediction latency in seconds",
-    buckets=[0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0],
-)
-DEFAULT_PROBABILITY = Histogram(
-    "loan_risk_default_probability",
-    "Distribution of predicted default probabilities",
-    buckets=[0.1 * i for i in range(11)],
-)
+
+def _get_cloudwatch_client():
+    """Return a boto3 CloudWatch client, or None if boto3 is unavailable."""
+    try:
+        import boto3  # noqa: PLC0415
+        cfg = get_settings()
+        return boto3.client("cloudwatch", region_name=cfg.aws.region)
+    except Exception:
+        return None
+
+
+def _emit_metrics(
+    cloudwatch_client,
+    namespace: str,
+    decision: str,
+    risk_tier: str,
+    latency_ms: float,
+    prob: float,
+) -> None:
+    """Emit prediction metrics to CloudWatch. Best-effort — never raises."""
+    if cloudwatch_client is None:
+        return
+    try:
+        cloudwatch_client.put_metric_data(
+            Namespace=namespace,
+            MetricData=[
+                {
+                    "MetricName": "PredictionCount",
+                    "Dimensions": [
+                        {"Name": "Decision", "Value": decision},
+                        {"Name": "RiskTier", "Value": risk_tier},
+                    ],
+                    "Value": 1,
+                    "Unit": "Count",
+                },
+                {
+                    "MetricName": "PredictionLatency",
+                    "Value": latency_ms,
+                    "Unit": "Milliseconds",
+                },
+                {
+                    "MetricName": "DefaultProbability",
+                    "Value": prob,
+                    "Unit": "None",
+                },
+            ],
+        )
+    except Exception as exc:
+        logger.warning("cloudwatch_emit_failed", error=str(exc))
 
 
 class ModelPredictor:
@@ -63,6 +95,7 @@ class ModelPredictor:
         self._explainer: shap.TreeExplainer | None = None
         self._model_version: str = "unknown"
         self._load_time: float = 0.0
+        self._cw_client = _get_cloudwatch_client()
 
     def load(self) -> None:
         """Load the champion model and feature pipeline from registry/disk."""
@@ -151,10 +184,15 @@ class ModelPredictor:
 
             latency_ms = (time.time() - start) * 1000
 
-            # Prometheus
-            PREDICTION_COUNTER.labels(prediction=decision, risk_tier=risk_tier).inc()
-            PREDICTION_LATENCY.observe(latency_ms / 1000)
-            DEFAULT_PROBABILITY.observe(prob)
+            # CloudWatch metrics (replaces Prometheus)
+            _emit_metrics(
+                self._cw_client,
+                namespace=self.cfg.aws.cloudwatch_namespace,
+                decision=decision,
+                risk_tier=risk_tier,
+                latency_ms=latency_ms,
+                prob=prob,
+            )
 
             # Log prediction for live AUC monitoring (best-effort)
             try:

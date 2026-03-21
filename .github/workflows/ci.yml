@@ -1,26 +1,22 @@
 # Continuous Integration Workflow
 # ================================
-# This workflow runs on every push and pull request.
-# It checks that:
-#   1. The code follows style guidelines (ruff linter)
-#   2. All unit tests pass
+# Runs on every push and PR:
+#   1. Lint (ruff)
+#   2. Unit tests
+#   3. On main branch: build + push Docker image to ECR
 #
-# It runs WITHOUT needing Docker, MLflow server, or any cloud services.
-# MLflow uses a local SQLite file instead of a real server.
-#
-# When does this run?
-#   - Every time you push code to any branch
-#   - Every time you open or update a pull request
+# ECR push uses OIDC (no long-lived AWS credentials).
+# Requires GitHub Actions secrets:
+#   AWS_ROLE_ARN — IAM role ARN with ECR push permissions
 
 name: CI — Lint & Unit Tests
 
 on:
   push:
-    branches: ["**"]      # Run on ALL branches
+    branches: ["**"]
   pull_request:
     branches: [main, develop]
 
-# Cancel any running job for the same branch when a new push arrives
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -33,50 +29,36 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11"]   # Primary version; add "3.12" to test both
+        python-version: ["3.11"]
 
     steps:
-      # Step 1: Download the code from GitHub
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Step 2: Set up the Python version we want to use
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
-      # Step 3: Install uv (the fast Python package manager)
-      # uv is 10-100x faster than pip for installing packages
       - name: Install uv
         uses: astral-sh/setup-uv@v4
         with:
           version: "latest"
-          enable-cache: true      # Cache the virtual environment between runs
+          enable-cache: true
 
-      # Step 4: Install all project dependencies
-      # --extra dev installs pytest, ruff, mypy, etc.
       - name: Install dependencies
         run: uv sync --extra dev
 
-      # Step 5: Check code style with ruff
-      # ruff is an ultra-fast Python linter written in Rust
-      # This catches common bugs and style issues before they reach production
       - name: Lint with ruff
-        run: uv run ruff check src/ scripts/ pipelines/
-        continue-on-error: false   # Fail the CI if there are lint errors
+        run: uv run ruff check src/ scripts/ sagemaker/
+        continue-on-error: false
 
-      # Step 6: Check code formatting
       - name: Check formatting
-        run: uv run ruff format --check src/ scripts/ pipelines/
-        continue-on-error: true    # Warning only for formatting
+        run: uv run ruff format --check src/ scripts/ sagemaker/
+        continue-on-error: true
 
-      # Step 7: Run unit tests
-      # Unit tests don't need MLflow server — we use a local SQLite database
-      # We also skip integration tests here (they need more setup)
       - name: Run unit tests
         env:
-          # Use SQLite instead of a real MLflow server
           MLFLOW_TRACKING_URI: "sqlite:///mlruns.db"
           MLFLOW__TRACKING_URI: "sqlite:///mlruns.db"
           PYTHONPATH: "src"
@@ -87,25 +69,48 @@ jobs:
             --no-header \
             -p no:warnings
 
-      # Step 8: Report test summary in the GitHub Actions UI
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-results-py${{ matrix.python-version }}
-          path: |
-            .coverage
+          path: .coverage
           retention-days: 7
 
-  # -----------------------------------------------------------------------
-  # Optional: Type checking with mypy
-  # Uncomment this job once the codebase has full type annotations
-  # -----------------------------------------------------------------------
-  # type-check:
-  #   name: Type Check (mypy)
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - uses: astral-sh/setup-uv@v4
-  #     - run: uv sync --extra dev
-  #     - run: uv run mypy src/loan_risk/
+  # ── Push Docker image to ECR (main branch only) ────────────────────────────
+  build-and-push-ecr:
+    name: Build & Push to ECR
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    permissions:
+      id-token: write   # Required for OIDC
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push Docker image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: loan-risk-serving
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker tag  $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+                      $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT

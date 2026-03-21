@@ -2,10 +2,14 @@
 
 Generates HTML drift reports and structured drift metrics
 comparing a reference dataset against current production data.
+
+Reports are uploaded to S3 and PSI metrics are emitted to CloudWatch
+when AWS config is available.
 """
 
 from __future__ import annotations
 
+import datetime
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +21,49 @@ from loan_risk.exceptions import MonitoringError
 from loan_risk.logging_setup import get_logger
 
 logger = get_logger(__name__)
+
+
+def _upload_report_to_s3(html_path: str) -> None:
+    """Upload an Evidently HTML drift report to S3. Best-effort."""
+    try:
+        import boto3  # noqa: PLC0415
+        cfg = get_settings()
+        if not cfg.aws.data_bucket or cfg.aws.data_bucket == "loan-risk-data":
+            return
+        timestamp = datetime.datetime.utcnow().strftime("%Y%m%dT%H%M%S")
+        key = f"monitoring/drift_reports/{timestamp}.html"
+        s3 = boto3.client("s3", region_name=cfg.aws.region)
+        s3.upload_file(html_path, cfg.aws.data_bucket, key)
+        logger.info("drift_report_uploaded_to_s3", bucket=cfg.aws.data_bucket, key=key)
+    except Exception as exc:
+        logger.warning("drift_report_s3_upload_failed", error=str(exc))
+
+
+def _emit_psi_to_cloudwatch(psi_values: dict[str, float]) -> None:
+    """Emit PSI per feature to CloudWatch. Best-effort."""
+    try:
+        import boto3  # noqa: PLC0415
+        cfg = get_settings()
+        if not psi_values:
+            return
+        cw = boto3.client("cloudwatch", region_name=cfg.aws.region)
+        metric_data = [
+            {
+                "MetricName": "PSI",
+                "Dimensions": [{"Name": "Feature", "Value": feature}],
+                "Value": psi,
+                "Unit": "None",
+            }
+            for feature, psi in psi_values.items()
+        ]
+        # CloudWatch accepts max 20 metrics per call
+        for i in range(0, len(metric_data), 20):
+            cw.put_metric_data(
+                Namespace=cfg.aws.cloudwatch_namespace,
+                MetricData=metric_data[i:i + 20],
+            )
+    except Exception as exc:
+        logger.warning("cloudwatch_psi_emit_failed", error=str(exc))
 
 
 def generate_drift_report(
@@ -84,6 +131,9 @@ def generate_drift_report(
         dataset_drift=drift_summary.get("dataset_drift"),
         drifted_columns=drift_summary.get("drifted_columns"),
     )
+
+    # Upload HTML report to S3 (best-effort)
+    _upload_report_to_s3(str(output_path_obj))
 
     return drift_summary
 
@@ -178,5 +228,8 @@ def compute_feature_psi_all(
         if feature in ref_pd.columns and feature in cur_pd.columns:
             psi = compute_psi(ref_pd[feature].dropna(), cur_pd[feature].dropna())
             psi_values[feature] = round(psi, 4)
+
+    # Emit PSI metrics to CloudWatch (best-effort)
+    _emit_psi_to_cloudwatch(psi_values)
 
     return psi_values

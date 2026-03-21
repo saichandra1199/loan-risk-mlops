@@ -1,10 +1,11 @@
-"""MLflow model registry client.
+"""Model registry clients.
 
-Provides a typed interface for:
-- Promoting a run to the model registry
-- Transitioning model versions (Staging → Production → Archived)
-- Fetching the latest Production model
-- Aliasing models (champion/challenger pattern)
+Provides typed interfaces for:
+- MLflowRegistryClient: MLflow model registry (champion alias pattern)
+- SageMakerRegistryClient: SageMaker Model Registry (model package groups)
+
+Both can be used simultaneously: MLflow manages the serving alias (@champion)
+while SageMaker tracks approval status for audit and lineage.
 """
 
 from __future__ import annotations
@@ -127,3 +128,110 @@ class MLflowRegistryClient:
             for mv in versions
         ]
 
+
+class SageMakerRegistryClient:
+    """Typed wrapper around boto3 SageMaker client for model package lifecycle."""
+
+    def __init__(self) -> None:
+        self.cfg = get_settings()
+        self._group_name = self.cfg.aws.sagemaker_model_package_group
+        self._region = self.cfg.aws.region
+
+    def _get_client(self):
+        import boto3  # noqa: PLC0415
+        return boto3.client("sagemaker", region_name=self._region)
+
+    def promote_to_sagemaker_registry(
+        self,
+        model_uri: str,
+        test_auc: float,
+        inference_image: str = "",
+        approval_status: str = "Approved",
+    ) -> str:
+        """Create a ModelPackage in the group and set its approval status.
+
+        Args:
+            model_uri: S3 URI to model artifacts (e.g. s3://bucket/prefix/model.tar.gz).
+            test_auc: Test AUC to record as a model card metric.
+            inference_image: ECR image URI for inference container.
+            approval_status: "Approved" or "PendingManualApproval".
+
+        Returns:
+            ModelPackage ARN.
+        """
+        client = self._get_client()
+
+        create_kwargs: dict[str, Any] = {
+            "ModelPackageGroupName": self._group_name,
+            "ModelApprovalStatus": approval_status,
+            "InferenceSpecification": {
+                "Containers": [{
+                    "Image": inference_image or "763104351884.dkr.ecr.us-east-1.amazonaws.com/xgboost:1.7-1",
+                    "ModelDataUrl": model_uri,
+                }],
+                "SupportedContentTypes": ["application/json"],
+                "SupportedResponseMIMETypes": ["application/json"],
+                "SupportedTransformInstanceTypes": ["ml.m5.xlarge"],
+                "SupportedRealtimeInferenceInstanceTypes": ["ml.m5.xlarge", "ml.m5.2xlarge"],
+            },
+            "ModelCardStatus": "Draft",
+            "AdditionalInferenceSpecificationsToAdd": [],
+        }
+
+        response = client.create_model_package(**create_kwargs)
+        arn = response["ModelPackageArn"]
+
+        logger.info(
+            "sagemaker_model_package_created",
+            arn=arn,
+            group=self._group_name,
+            test_auc=test_auc,
+        )
+        return arn
+
+    def get_champion_from_sagemaker(self) -> dict[str, Any] | None:
+        """Return the latest Approved model package in the group.
+
+        Returns:
+            Dict with arn, creation_time, and metadata; or None if no approved package.
+        """
+        client = self._get_client()
+
+        response = client.list_model_packages(
+            ModelPackageGroupName=self._group_name,
+            ModelApprovalStatus="Approved",
+            SortBy="CreationTime",
+            SortOrder="Descending",
+            MaxResults=1,
+        )
+
+        packages = response.get("ModelPackageSummaryList", [])
+        if not packages:
+            return None
+
+        pkg = packages[0]
+        return {
+            "arn": pkg["ModelPackageArn"],
+            "version": pkg.get("ModelPackageVersion"),
+            "creation_time": str(pkg.get("CreationTime", "")),
+            "status": pkg.get("ModelApprovalStatus"),
+        }
+
+    def list_packages(self, max_results: int = 20) -> list[dict[str, Any]]:
+        """List model packages in the group."""
+        client = self._get_client()
+        response = client.list_model_packages(
+            ModelPackageGroupName=self._group_name,
+            SortBy="CreationTime",
+            SortOrder="Descending",
+            MaxResults=max_results,
+        )
+        return [
+            {
+                "arn": p["ModelPackageArn"],
+                "version": p.get("ModelPackageVersion"),
+                "status": p.get("ModelApprovalStatus"),
+                "creation_time": str(p.get("CreationTime", "")),
+            }
+            for p in response.get("ModelPackageSummaryList", [])
+        ]

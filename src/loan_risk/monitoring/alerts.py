@@ -1,11 +1,13 @@
 """Drift and performance threshold checks — triggers retraining signal.
 
 A "retraining signal" is a structured dict that downstream orchestration
-(Prefect) can act on to kick off a retraining flow.
+(SageMaker Pipelines / EventBridge) can act on to kick off a retraining run.
+Critical alerts are published to SNS when a topic ARN is configured.
 """
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -18,6 +20,24 @@ from loan_risk.monitoring.drift import compute_feature_psi_all
 from loan_risk.monitoring.performance import compute_live_auc
 
 logger = get_logger(__name__)
+
+
+def _publish_to_sns(topic_arn: str, subject: str, message: dict) -> None:
+    """Publish a structured alert payload to SNS. Best-effort."""
+    if not topic_arn:
+        return
+    try:
+        import boto3  # noqa: PLC0415
+        cfg = get_settings()
+        sns = boto3.client("sns", region_name=cfg.aws.region)
+        sns.publish(
+            TopicArn=topic_arn,
+            Subject=subject[:100],
+            Message=json.dumps(message, indent=2),
+        )
+        logger.info("sns_alert_published", topic_arn=topic_arn, subject=subject)
+    except Exception as exc:
+        logger.warning("sns_publish_failed", error=str(exc))
 
 
 @dataclass
@@ -136,9 +156,34 @@ def run_monitoring_checks(
     result.retrain_triggered = result.has_critical_alerts
 
     if result.retrain_triggered:
-        logger.warning(
-            "retraining_triggered",
-            n_critical_alerts=sum(1 for a in result.alerts if a.severity == "critical"),
-        )
+        n_critical = sum(1 for a in result.alerts if a.severity == "critical")
+        logger.warning("retraining_triggered", n_critical_alerts=n_critical)
+
+        # Publish critical alerts to SNS
+        sns_arn = cfg.aws.sns_alert_topic_arn
+        if sns_arn:
+            _publish_to_sns(
+                topic_arn=sns_arn,
+                subject=f"[{cfg.model.name}] Retraining triggered: {n_critical} critical alerts",
+                message={
+                    "retrain_triggered": True,
+                    "n_critical_alerts": n_critical,
+                    "alerts": [
+                        {
+                            "type": a.alert_type,
+                            "severity": a.severity,
+                            "feature": a.feature,
+                            "value": a.value,
+                            "threshold": a.threshold,
+                            "message": a.message,
+                        }
+                        for a in result.alerts
+                        if a.severity == "critical"
+                    ],
+                    "psi_values": result.psi_values,
+                    "live_auc": result.live_auc,
+                    "timestamp": result.timestamp,
+                },
+            )
 
     return result
