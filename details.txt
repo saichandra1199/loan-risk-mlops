@@ -1,0 +1,41 @@
+================================================================
+  Bootstrap complete!
+================================================================
+
+  Account ID:          512491905847
+  TF State Bucket:     loan-risk-tf-state-512491905847
+  TF Lock Table:       loan-risk-tf-locks
+  GitHub Actions Role: arn:aws:iam::512491905847:role/loan-risk-github-actions-role
+
+  NEXT STEPS:
+
+  1. Set these GitHub Actions secrets in your repo
+     (Settings → Secrets and variables → Actions):
+
+     Secret name       Value
+     ─────────────     ─────
+     AWS_ROLE_ARN      arn:aws:iam::512491905847:role/loan-risk-github-actions-role
+     TF_DB_PASSWORD    MLopsClaude1
+
+  2. Set these GitHub Actions variables:
+
+     Variable name          Value
+     ─────────────────      ─────
+     AWS_REGION             ap-south-1
+     AWS_DATA_BUCKET        loan-risk-data-512491905847
+     AWS_ARTIFACTS_BUCKET   loan-risk-artifacts-512491905847
+     ECS_CLUSTER            loan-risk-cluster
+     ECS_SERVICE            loan-risk-serving
+     SAGEMAKER_ROLE_ARN     (filled in after terraform apply)
+
+  3. Run Terraform:
+     cd infra/terraform
+     terraform init
+     terraform plan -var='db_password=<your-password>'
+     terraform apply -var='db_password=<your-password>'
+
+  4. After apply, get SAGEMAKER_ROLE_ARN:
+     terraform output sagemaker_execution_role_arn
+     → set this as GitHub variable SAGEMAKER_ROLE_ARN
+
+================================================================
