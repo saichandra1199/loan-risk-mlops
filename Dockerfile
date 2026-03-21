@@ -9,7 +9,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /app
 
-COPY pyproject.toml .python-version ./
+COPY pyproject.toml uv.lock .python-version ./
 COPY src/ ./src/
 
 # Install only runtime deps (no dev extras)
