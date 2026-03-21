@@ -9,7 +9,7 @@ resource "aws_sagemaker_model_package_group" "main" {
 # or pass it as a variable.
 resource "aws_sagemaker_pipeline" "training" {
   pipeline_name         = "${var.project_name}-training-pipeline"
-  pipeline_display_name = "Loan Risk Training Pipeline"
+  pipeline_display_name = "Loan-Risk-Training-Pipeline"
   role_arn              = var.sagemaker_role_arn
 
   # Pipeline definition is managed by the Python SDK; use a minimal placeholder
