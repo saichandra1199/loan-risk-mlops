@@ -220,7 +220,7 @@ Click **"New repository secret"** for each:
 | Secret Name | Value |
 |-------------|-------|
 | `AWS_ROLE_ARN` | The role ARN from bootstrap output (e.g. `arn:aws:iam::123456789012:role/loan-risk-github-actions-role`) |
-| `TF_DB_PASSWORD` | Choose any strong password for the database (e.g. `MyDb@Pass123!`) — write it down, you will need it in Step 7 |
+| `TF_DB_PASSWORD` | Choose a strong password for the database (e.g. `MyDbPass123`) — **do not use** `/`, `@`, `"`, or spaces (RDS rejects them). Write it down, you will need it in Step 7. |
 
 ### Variables (non-sensitive — visible in logs)
 
@@ -251,11 +251,11 @@ cd infra/terraform
 terraform init
 
 # Preview what will be created (no changes made yet)
-terraform plan -var="db_password=MyDb@Pass123!"
-# Replace MyDb@Pass123! with the password you chose in Step 6
+terraform plan -var="db_password=MyDbPass123"
+# Replace MyDbPass123 with the password you chose in Step 6
 
 # Create all resources (takes 10–15 minutes)
-terraform apply -var="db_password=MyDb@Pass123!"
+terraform apply -var="db_password=MyDbPass123"
 ```
 
 When prompted `Do you want to perform these actions?` — type `yes` and press Enter.
@@ -300,11 +300,32 @@ git push origin aws       # push triggers the CI workflow
 
 Go to GitHub → **Actions** tab → you should see the **"CI — Lint & Unit Tests"** workflow running.
 
-Once it completes (green checkmark), the Docker image is in ECR and ready for ECS.
+Or watch it from your terminal:
+
+```bash
+gh run watch --repo <your-github-username>/loan-risk-mlops
+```
+
+Once the workflow shows a green checkmark, verify the image landed in ECR:
+
+```bash
+aws ecr describe-images \
+  --repository-name loan-risk-serving \
+  --region ap-south-1 \
+  --query 'imageDetails[-1].{tag:imageTags[0],pushed:imagePushedAt}' \
+  --output table
+```
+
+You should see a row with tag `latest` and a recent timestamp. If the table is empty, the CI push step failed — check the Actions logs.
 
 ---
 
 ## Step 9 — Deploy the Serving Layer
+
+> **Note:** `terraform apply` creates the ECS service immediately, but the Docker
+> image doesn't exist in ECR until the first CI build finishes (Step 8). ECS tasks
+> will fail with `CannotPullContainerError` until the image is pushed. This is
+> expected — run the commands below after Step 8 completes to force ECS to retry.
 
 Once the Docker image is in ECR, trigger the ECS deployment:
 
@@ -436,13 +457,13 @@ When you are not using the infrastructure, destroy it to stop paying:
 
 ```bash
 cd infra/terraform
-terraform destroy -var="db_password=MyDb@Pass123!"
+terraform destroy -var="db_password=MyDbPass123"
 # Type 'yes' when prompted
 ```
 
 To bring it back:
 ```bash
-terraform apply -var="db_password=MyDb@Pass123!"
+terraform apply -var="db_password=MyDbPass123"
 # Then re-push the Docker image and re-upsert the SageMaker pipeline
 ```
 
