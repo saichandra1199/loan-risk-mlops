@@ -1,3 +1,12 @@
-output "endpoint" { value = aws_db_instance.mlflow.endpoint; sensitive = true }
-output "db_name"  { value = aws_db_instance.mlflow.db_name }
-output "username" { value = aws_db_instance.mlflow.username }
+output "endpoint" {
+  value     = aws_db_instance.mlflow.endpoint
+  sensitive = true
+}
+
+output "db_name" {
+  value = aws_db_instance.mlflow.db_name
+}
+
+output "username" {
+  value = aws_db_instance.mlflow.username
+}
