@@ -16,10 +16,7 @@ resource "aws_sns_topic_subscription" "email" {
 }
 
 # ── Log Groups ─────────────────────────────────────────────────────────────────
-resource "aws_cloudwatch_log_group" "ecs_serving" {
-  name              = "/ecs/${var.project_name}-serving"
-  retention_in_days = 30
-}
+# /ecs/{project}-serving log group is created by the ECS module to avoid duplicates
 
 resource "aws_cloudwatch_log_group" "sagemaker_pipeline" {
   name              = "/sagemaker/${var.project_name}-pipeline"

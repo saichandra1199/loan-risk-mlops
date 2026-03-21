@@ -121,6 +121,8 @@ module "sagemaker" {
   project_name         = var.project_name
   environment          = var.environment
   sagemaker_role_arn   = module.iam.sagemaker_role_arn
+  aws_region           = var.aws_region
+  account_id           = data.aws_caller_identity.current.account_id
 }
 
 # ── CloudWatch ────────────────────────────────────────────────────────────────

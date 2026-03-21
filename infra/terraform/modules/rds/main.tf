@@ -7,7 +7,7 @@ resource "aws_db_subnet_group" "main" {
 resource "aws_db_instance" "mlflow" {
   identifier        = "${var.project_name}-mlflow-db"
   engine            = "postgres"
-  engine_version    = "15.4"
+  engine_version    = "16"
   instance_class    = "db.t3.micro"
   allocated_storage = 20
   storage_type      = "gp3"
