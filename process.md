@@ -451,6 +451,86 @@ You can also trigger manually from GitHub Actions → **Training Pipeline (SageM
 
 ---
 
+## Stop Now / Resume Next Time (Zero Cost While Away)
+
+### Stop Everything (run this now)
+
+```bash
+cd infra/terraform
+terraform destroy -var="db_password=MyDbPass123"
+# When prompted: type 'yes' and press Enter
+# Takes 10–15 minutes
+```
+
+> **If destroy fails on S3 buckets** — that means a bucket has data in it (DVC cache,
+> MLflow artifacts, etc.). That is fine. S3 costs less than $0.10/month for small
+> amounts of data. The expensive resources (RDS, ECS, NAT Gateways, ALB) are still
+> destroyed. Your data is safe and will be there when you resume.
+
+After destroy, you are paying **nothing** except a few cents for any S3 data that remains.
+
+#### What survives the destroy
+
+| Resource | Preserved? | Why |
+|----------|-----------|-----|
+| S3 buckets + data | ✅ Yes | Terraform won't delete non-empty buckets — your data is safe |
+| Terraform state bucket | ✅ Yes | Created by bootstrap, not managed by `terraform destroy` |
+| GitHub secrets & variables | ✅ Yes | Stored in GitHub, nothing to do |
+| AWS CLI config | ✅ Yes | On your machine |
+| RDS database | ❌ Destroyed | Recreated on next apply (MLflow schema is rebuilt automatically) |
+| ECS cluster & tasks | ❌ Destroyed | Recreated on next apply |
+| ECR Docker images | ❌ Destroyed | Rebuilt automatically by CI on next push |
+| VPC, NAT Gateways, ALB | ❌ Destroyed | Recreated on next apply |
+
+---
+
+### Resume Next Time (start here tomorrow)
+
+Steps 1–6 are already done. Skip them entirely. Pick up from Step 7:
+
+**Step 7 — Recreate infrastructure:**
+```bash
+cd infra/terraform
+terraform apply -var="db_password=MyDbPass123"
+# Takes 10–15 minutes — type 'yes' when prompted
+```
+
+**Step 8 — Rebuild the Docker image:**
+```bash
+git push origin aws   # triggers CI which pushes the image to ECR
+
+# Watch progress
+gh run watch --repo <your-github-username>/loan-risk-mlops
+
+# Verify image is in ECR
+aws ecr describe-images \
+  --repository-name loan-risk-serving \
+  --region ap-south-1 \
+  --query 'imageDetails[-1].{tag:imageTags[0],pushed:imagePushedAt}' \
+  --output table
+```
+
+**Step 9 — Redeploy the serving layer:**
+```bash
+aws ecs update-service \
+  --cluster loan-risk-cluster \
+  --service loan-risk-serving \
+  --force-new-deployment \
+  --region ap-south-1
+
+aws ecs wait services-stable \
+  --cluster loan-risk-cluster \
+  --services loan-risk-serving \
+  --region ap-south-1
+
+echo "Back online!"
+```
+
+> **No need to re-run the training pipeline** unless you want to retrain. The model
+> artifacts are in S3 and MLflow will reconnect to them after the RDS schema is rebuilt.
+
+---
+
 ## Tearing Down (Save Money)
 
 When you are not using the infrastructure, destroy it to stop paying:
