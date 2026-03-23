@@ -5,7 +5,7 @@ resource "aws_lb" "main" {
   security_groups    = [var.alb_sg_id]
   subnets            = var.public_subnet_ids
 
-  enable_deletion_protection = var.environment == "prod"
+  enable_deletion_protection = false
 
   access_logs {
     bucket  = ""

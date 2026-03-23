@@ -457,10 +457,13 @@ You can also trigger manually from GitHub Actions → **Training Pipeline (SageM
 
 ```bash
 cd infra/terraform
-terraform destroy -var="db_password=MyDbPass123"
+terraform destroy -var="db_password=MyDbPass123" -parallelism=20
 # When prompted: type 'yes' and press Enter
-# Takes 10–15 minutes
+# Takes ~8–10 minutes
 ```
+
+> `-parallelism=20` doubles concurrent deletions (default is 10). RDS deletion itself
+> takes ~5 min regardless — that is an AWS minimum, not something Terraform can speed up.
 
 > **If destroy fails on S3 buckets** — that means a bucket has data in it (DVC cache,
 > MLflow artifacts, etc.). That is fine. S3 costs less than $0.10/month for small
@@ -537,7 +540,7 @@ When you are not using the infrastructure, destroy it to stop paying:
 
 ```bash
 cd infra/terraform
-terraform destroy -var="db_password=MyDbPass123"
+terraform destroy -var="db_password=MyDbPass123" -parallelism=20
 # Type 'yes' when prompted
 ```
 
@@ -547,8 +550,9 @@ terraform apply -var="db_password=MyDbPass123"
 # Then re-push the Docker image and re-upsert the SageMaker pipeline
 ```
 
-> The S3 buckets, ECR images, and MLflow data are preserved after destroy
-> (they are not managed by Terraform destroy by default).
+> The S3 buckets and MLflow data are preserved after destroy.
+> ECR images are force-deleted (`force_delete = true` in the ECR module) — the CI
+> pipeline rebuilds them automatically on the next `git push`.
 
 ---
 

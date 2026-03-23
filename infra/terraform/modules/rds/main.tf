@@ -22,9 +22,9 @@ resource "aws_db_instance" "mlflow" {
 
   multi_az               = var.environment == "prod"
   publicly_accessible    = false
-  deletion_protection    = var.environment == "prod"
-  skip_final_snapshot    = var.environment != "prod"
-  final_snapshot_identifier = var.environment == "prod" ? "${var.project_name}-mlflow-final-snapshot" : null
+  deletion_protection    = false
+  skip_final_snapshot    = true
+  final_snapshot_identifier = null
 
   backup_retention_period = 7
   backup_window           = "03:00-04:00"

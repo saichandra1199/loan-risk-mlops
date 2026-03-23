@@ -507,8 +507,8 @@ aws cloudwatch get-metric-statistics \
 **Quick reference:**
 
 ```bash
-# Stop everything now (takes ~10–15 min, then you pay nothing)
-cd infra/terraform && terraform destroy -var="db_password=YourPassword"
+# Stop everything now (takes ~8–10 min, then you pay nothing)
+cd infra/terraform && terraform destroy -var="db_password=YourPassword" -parallelism=20
 
 # Resume tomorrow — re-run Steps 7, 8, 9 from process.md
 terraform apply -var="db_password=YourPassword"
@@ -531,8 +531,8 @@ Use this when you want to permanently delete everything and pay nothing ever aga
 
 ```bash
 cd infra/terraform
-terraform destroy -var="db_password=YourPassword"
-# Type 'yes' when prompted — takes 10–15 minutes
+terraform destroy -var="db_password=YourPassword" -parallelism=20
+# Type 'yes' when prompted — takes ~8–10 minutes
 ```
 
 ### Step 2 — Empty and delete the S3 buckets
@@ -653,6 +653,16 @@ terraform import module.ecs.aws_cloudwatch_log_group.ecs /ecs/loan-risk-serving
 ### `terraform apply` — "MasterUserPassword is not valid"
 Password contains an illegal character (`/`, `@`, `"`, or space).
 Use only letters and digits, e.g. `MyDbPass123`.
+
+### `terraform apply` — "secret with this name is already scheduled for deletion"
+This happens if you ran `terraform destroy` with an older version of the config that used
+a 7-day Secrets Manager recovery window. Force-delete the pending secrets, then re-apply:
+```bash
+aws secretsmanager delete-secret --secret-id loan-risk/rds-password --force-delete-without-recovery
+aws secretsmanager delete-secret --secret-id loan-risk/mlflow-config --force-delete-without-recovery
+terraform apply -var="db_password=YourPassword"
+```
+The current config uses `recovery_window_in_days = 0`, so this won't recur on future destroy/apply cycles.
 
 ### ECS tasks stuck in `CannotPullContainerError`
 The Docker image hasn't been pushed to ECR yet. Wait for the CI
