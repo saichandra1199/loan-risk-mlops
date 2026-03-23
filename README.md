@@ -453,29 +453,46 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
+---
+
+### Option A — One-command shortcuts (recommended)
+
+Two shell scripts automate the entire workflow:
+
+```bash
+# Full training flow (install → test → download → preprocess → train → promote)
+bash run.sh
+
+# Serve the model and make a prediction
+bash predict.sh
+```
+
+`run.sh` must complete successfully before `predict.sh` will work.
+See the step-by-step breakdown below if you want to run stages individually.
+
+---
+
+### Option B — Step by step
+
 ### Step 3: Install all dependencies
 
 ```bash
 uv sync --extra dev
 ```
 
-This installs all 40+ packages in ~30 seconds. `uv` reads `pyproject.toml` and
-creates a `.venv/` directory with everything you need.
-
-**Expected output:**
-```
-Resolved 87 packages in 2.34s
-Installed 87 packages in 18.45s
-```
+This installs all packages (including `openpyxl` and `xlrd` for Excel dataset reading)
+into `.venv/` in ~30 seconds.
 
 ### Step 4: Configure environment
 
+Create a `.env` file with the SQLite MLflow backend (no server required):
+
 ```bash
-cp .env.example .env
+echo 'MLFLOW__TRACKING_URI=sqlite:///mlruns.db' > .env
 ```
 
-The defaults in `.env.example` work for local development without any changes.
-Edit `.env` only if you want to use a real MLflow server or different paths.
+> **Why not `.env.example`?** The example file points MLflow at `http://localhost:5000`
+> (a Docker server). The SQLite backend works locally with zero setup.
 
 ### Step 5: Verify the installation
 
@@ -491,16 +508,17 @@ uv run python -c "import loan_risk; print(f'loan_risk v{loan_risk.__version__} i
 uv run pytest tests/unit/ -v
 ```
 
-**Expected output:** All 25+ tests should pass.
+**Expected output:** All 30+ tests should pass.
 
 ### Step 7: Download the dataset
 
 ```bash
-uv run python scripts/download_dataset.py
+uv run python scripts/download_dataset.py --output data/raw/credit_default_raw.csv
 ```
 
 This downloads 30,000 rows from the UCI/OpenML repository (~2MB).
-The file is saved to `data/raw/credit_default_raw.csv`.
+OpenML is tried first; if it fails, the script falls back to a direct UCI ZIP download
+(requires `openpyxl` + `xlrd`, both included in the project dependencies).
 
 **Expected output:**
 ```
@@ -512,25 +530,21 @@ Downloading UCI Credit Card Default dataset via OpenML...
 Download complete.
 ```
 
+> If the file already exists, the script skips the download and exits immediately.
+
 ### Step 8: Preprocess the data
 
 ```bash
 uv run python scripts/preprocess_dataset.py
 ```
 
-This maps UCI columns to our loan schema and validates it with Pandera.
+This maps UCI columns to our loan schema and validates with Pandera.
 
 **Expected output:**
 ```
 Loading raw data from: data/raw/credit_default_raw.csv
   Loaded 30,000 rows × 25 columns
-
 Applying feature transformations...
-  loan_id: LOAN_XXXXXXX format
-  loan_amount: from 'limit_bal' → clipped to [100, 100k]
-  ...
-  loan_default: default rate = 22.1%
-
 Validating against Pandera schema...
   Schema validation PASSED: 30,000 rows
 Saved preprocessed data to: data/raw/loans.parquet
@@ -539,25 +553,39 @@ Saved preprocessed data to: data/raw/loans.parquet
 ### Step 9: Run the full training pipeline
 
 ```bash
-uv run python scripts/run_pipeline.py --stage all --skip-tuning
+MLFLOW_TRACKING_URI=sqlite:///mlruns.db uv run python scripts/run_pipeline.py --stage all --skip-tuning
 ```
 
-This runs: validate → feature engineering → train LightGBM → evaluate → register model.
+This runs: feature engineering → train LightGBM → evaluate → register model in MLflow.
 
 **Expected output (abbreviated):**
 ```
-[validate] Schema validation passed for 30,000 rows
 [features] train=21,000 val=3,000 test=6,000
-[train] run_id=a3f8b2c1...
-[train] val_auc=0.7682  test_auc=0.7591
-[evaluate] Report saved to reports/evaluation/report_a3f8b2c1_2024-01-15.json
-[evaluate] Model promoted to champion. Version: 1
+[train] run_id=b57185d4...
+[train] val_auc=0.7691  test_auc=0.7548
+[evaluate] Report saved to reports/evaluation/report_b57185d4_2026-03-23.json
+[evaluate] Promotion rejected: AUC 0.7548 < threshold 0.8000
+[evaluate] DVC metrics saved to reports/evaluation/metrics.json
+```
+
+> **Note on promotion:** The default AUC threshold is 0.80. The UCI dataset typically
+> yields ~0.75 AUC, so automatic promotion is rejected. Promote manually after training:
+
+```bash
+MLFLOW_TRACKING_URI=sqlite:///mlruns.db uv run python - <<'EOF'
+from mlflow import MlflowClient
+mc = MlflowClient()
+versions = mc.search_model_versions("name='loan-risk-classifier'")
+latest = max(versions, key=lambda v: int(v.version))
+mc.set_registered_model_alias("loan-risk-classifier", "champion", latest.version)
+print(f"Promoted version {latest.version} to @champion")
+EOF
 ```
 
 ### Step 10: Start the prediction API
 
 ```bash
-uv run uvicorn loan_risk.serving.app:create_app --factory --port 8000 --reload
+MLFLOW_TRACKING_URI=sqlite:///mlruns.db uv run uvicorn loan_risk.serving.app:create_app --factory --port 8000 --reload
 ```
 
 **Expected output:**
@@ -1896,12 +1924,49 @@ PYTHONPATH=src uv run python scripts/run_pipeline.py --stage train
 uv run python scripts/run_pipeline.py --stage train
 ```
 
-### "MLflow connection refused"
+### "MLflow connection refused" / retrying localhost:5000
 
 The training pipeline works WITHOUT a running MLflow server.
-Set this environment variable to use a local SQLite file instead:
+The `.env.example` file points to `http://localhost:5000` (Docker). Override it:
 ```bash
-export MLFLOW_TRACKING_URI=sqlite:///mlruns.db
+# In .env (use double-underscore for nested keys):
+MLFLOW__TRACKING_URI=sqlite:///mlruns.db
+
+# Or prefix any command:
+MLFLOW_TRACKING_URI=sqlite:///mlruns.db uv run python scripts/run_pipeline.py --stage all
+```
+
+### "Model not loaded. Call predictor.load() first." (500 on /predict)
+
+The API started but no `@champion` model alias exists in the registry.
+Either the pipeline AUC fell below the promotion threshold, or training hasn't run yet.
+Promote the latest trained version manually:
+```bash
+MLFLOW_TRACKING_URI=sqlite:///mlruns.db uv run python - <<'EOF'
+from mlflow import MlflowClient
+mc = MlflowClient()
+versions = mc.search_model_versions("name='loan-risk-classifier'")
+latest = max(versions, key=lambda v: int(v.version))
+mc.set_registered_model_alias("loan-risk-classifier", "champion", latest.version)
+print(f"Promoted version {latest.version} to @champion")
+EOF
+```
+Then **restart the API** — the model is loaded once at startup, not per request.
+
+### "Promotion rejected: AUC < threshold 0.8000"
+
+This is expected — the UCI credit dataset yields ~0.75 AUC with default hyperparameters.
+The threshold exists to prevent bad models reaching production. For local dev, either:
+- Use the manual promotion command above, or
+- Lower the threshold in `.env`: `MODEL__PROMOTION_AUC_THRESHOLD=0.70`
+
+### "ERROR: pandas not installed" during UCI dataset download
+
+Despite pandas being installed, this error can appear when `openpyxl` or `xlrd` are
+missing (needed to read the `.xls` file inside the UCI ZIP). Both are now declared as
+project dependencies — run `uv sync` to install them:
+```bash
+uv sync
 ```
 
 ### "Pandera schema validation failed: credit_score out of range"
@@ -1936,11 +2001,12 @@ Another process is using port 8000. Either kill it or use a different port:
 uv run uvicorn loan_risk.serving.app:create_app --factory --port 8001
 ```
 
-### "Model not found in registry"
+### "Model not found in registry" / version '@champion' not found
 
-The champion model hasn't been trained yet. Run the full pipeline first:
+The champion model hasn't been promoted yet. Run the full pipeline and then promote:
 ```bash
-uv run python scripts/run_pipeline.py --stage all --skip-tuning
+bash run.sh
+# run.sh handles promotion automatically as the final step
 ```
 
 ---

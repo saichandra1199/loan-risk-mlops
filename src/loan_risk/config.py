@@ -19,9 +19,26 @@ from typing import Literal
 
 import yaml
 from pydantic import BaseModel, Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
+
+
+class _YamlSource(PydanticBaseSettingsSource):
+    """Lowest-priority source: reads config/settings.yaml."""
+
+    def __init__(self, settings_cls: type[BaseSettings], yaml_path: Path) -> None:
+        super().__init__(settings_cls)
+        self._data: dict = {}
+        if yaml_path.exists():
+            with open(yaml_path) as f:
+                self._data = yaml.safe_load(f) or {}
+
+    def get_field_value(self, field, field_name):  # type: ignore[override]
+        return self._data.get(field_name), field_name, False
+
+    def __call__(self) -> dict:
+        return self._data
 
 
 class MLflowConfig(BaseModel):
@@ -88,14 +105,25 @@ class Settings(BaseSettings):
     features: FeaturesConfig = FeaturesConfig()
 
     @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        yaml_path = PROJECT_ROOT / "config" / "settings.yaml"
+        return (
+            init_settings,      # highest priority: explicit kwargs
+            env_settings,       # process env vars
+            dotenv_settings,    # .env file
+            _YamlSource(settings_cls, yaml_path),  # lowest: settings.yaml
+        )
+
+    @classmethod
     def from_yaml(cls, yaml_path: Path | None = None) -> Settings:
-        """Load settings from YAML file, then apply env var overrides."""
-        path = yaml_path or (PROJECT_ROOT / "config" / "settings.yaml")
-        if path.exists():
-            with open(path) as f:
-                yaml_data = yaml.safe_load(f) or {}
-            # Flatten nested dict for pydantic-settings
-            return cls(**yaml_data)
+        """Return a Settings instance; sources are ordered by settings_customise_sources."""
         return cls()
 
 

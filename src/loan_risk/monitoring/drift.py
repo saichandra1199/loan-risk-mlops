@@ -40,9 +40,8 @@ def generate_drift_report(
         MonitoringError: If the report cannot be generated.
     """
     try:
-        from evidently import ColumnMapping
-        from evidently.metric_preset import DataDriftPreset
-        from evidently.report import Report
+        from evidently import DataDefinition, Dataset, Report
+        from evidently.presets import DataDriftPreset
     except ImportError as exc:
         raise MonitoringError("Evidently not installed. Run: pip install evidently") from exc
 
@@ -56,27 +55,22 @@ def generate_drift_report(
     cur_cols_to_drop = [id_col] if id_col in current_df.columns else []
     cur_pd = current_df.drop(cur_cols_to_drop).to_pandas()
 
-    if column_mapping is None:
-        # Auto-detect categorical columns
-        cat_cols = [
-            c for c in ref_pd.columns
-            if ref_pd[c].dtype == object and c != target_col
-        ]
-        column_mapping = ColumnMapping(
-            target=target_col if target_col in ref_pd.columns else None,
-            categorical_features=cat_cols,
-        )
+    # Build DataDefinition (replaces ColumnMapping in Evidently v0.7+)
+    cat_cols = [c for c in ref_pd.columns if ref_pd[c].dtype == object and c != target_col]
+    data_def = DataDefinition(categorical_columns=cat_cols or None)
 
-    report = Report(metrics=[DataDriftPreset()])
-    report.run(reference_data=ref_pd, current_data=cur_pd, column_mapping=column_mapping)
+    ref_ds = Dataset.from_pandas(ref_pd, data_definition=data_def)
+    cur_ds = Dataset.from_pandas(cur_pd, data_definition=data_def)
+
+    report = Report([DataDriftPreset()])
+    snapshot = report.run(reference_data=ref_ds, current_data=cur_ds)
 
     output_path_obj = Path(output_path)
     output_path_obj.parent.mkdir(parents=True, exist_ok=True)
-    report.save_html(str(output_path_obj))
+    snapshot.save_html(str(output_path_obj))
 
     # Extract structured summary
-    report_dict = report.as_dict()
-    drift_summary = _extract_drift_summary(report_dict)
+    drift_summary = _extract_drift_summary(snapshot.dict())
 
     logger.info(
         "drift_report_generated",
@@ -89,18 +83,32 @@ def generate_drift_report(
 
 
 def _extract_drift_summary(report_dict: dict[str, Any]) -> dict[str, Any]:
-    """Pull key metrics out of the Evidently report dict."""
+    """Pull key metrics out of the Evidently v0.7+ snapshot dict.
+
+    The snapshot has a flat list of metrics, each with 'metric_name' and 'value'.
+    DriftedColumnsCount gives count/share; ValueDrift entries give per-column p-values.
+    """
     try:
         metrics = report_dict.get("metrics", [])
+        drifted_count = 0
+        drifted_share = 0.0
+        n_value_drift = 0
         for metric in metrics:
-            if "DatasetDriftMetric" in metric.get("metric", ""):
-                result = metric.get("result", {})
-                return {
-                    "dataset_drift": result.get("dataset_drift", False),
-                    "drifted_columns": result.get("number_of_drifted_columns", 0),
-                    "share_of_drifted_columns": result.get("share_of_drifted_columns", 0.0),
-                    "n_features_tested": result.get("number_of_columns", 0),
-                }
+            name: str = metric.get("metric_name", "")
+            value = metric.get("value", {})
+            if name.startswith("DriftedColumnsCount"):
+                if isinstance(value, dict):
+                    drifted_count = int(value.get("count", 0))
+                    drifted_share = float(value.get("share", 0.0))
+            elif name.startswith("ValueDrift"):
+                n_value_drift += 1
+        dataset_drift = drifted_share >= 0.5
+        return {
+            "dataset_drift": dataset_drift,
+            "drifted_columns": drifted_count,
+            "share_of_drifted_columns": drifted_share,
+            "n_features_tested": n_value_drift,
+        }
     except Exception as exc:
         logger.warning("drift_summary_extraction_failed", error=str(exc))
 
