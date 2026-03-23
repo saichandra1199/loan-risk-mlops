@@ -35,6 +35,7 @@
 17. [Debugging Guide](#17-debugging-guide)
 18. [Troubleshooting](#18-troubleshooting)
 19. [FAQ for Beginners](#19-faq-for-beginners)
+20. [Observability Tools — MLflow, Prefect, Prometheus, Grafana](#20-observability-tools--mlflow-prefect-prometheus-grafana)
 
 ---
 
@@ -2052,6 +2053,392 @@ A: 1) Add the column name to `src/loan_risk/features/definitions.py`, 2) Update 
 **Q: Where do I see all the training runs?**
 
 A: Start MLflow UI with `docker-compose up -d mlflow` then open http://localhost:5000. You'll see every run with its parameters, metrics, and artifacts. Without Docker, run `mlflow ui --backend-store-uri sqlite:///mlruns.db`.
+
+---
+
+---
+
+## 20. Observability Tools — MLflow, Prefect, Prometheus, Grafana
+
+This section is a hands-on guide for beginners. For each tool you will learn:
+- **What the problem was** before this tool existed
+- **What the tool does** in plain English
+- **How to start it**
+- **What URL to open**
+- **What to actually look at** once it's open — screen by screen
+
+All four tools are part of the `docker-compose` stack and are completely optional for
+local development. They become essential once you want to track experiments, schedule
+pipelines, or monitor a live service.
+
+---
+
+### Starting the full observability stack
+
+```bash
+docker-compose up -d
+```
+
+This starts all four tools in the background. Check they are all healthy:
+
+```bash
+docker-compose ps
+```
+
+All four services should show `running`. If one shows `exited`, check its logs:
+
+```bash
+docker-compose logs mlflow
+docker-compose logs prefect
+docker-compose logs prometheus
+docker-compose logs grafana
+```
+
+To stop everything:
+
+```bash
+docker-compose down
+```
+
+---
+
+## MLflow — Experiment Tracking & Model Registry
+
+### The problem it solves
+
+Without MLflow, every training run is a mystery:
+- You run the pipeline Monday — AUC is 0.76
+- You change a parameter Tuesday — AUC drops to 0.71
+- You can't remember what you changed
+- Three months later, "which model is in production?" — nobody knows
+
+MLflow is a logbook. Every training run is automatically recorded with:
+- Every parameter (`n_estimators`, `learning_rate`, etc.)
+- Every metric (`val_auc`, `test_auc`, `gini`, `ks_stat`)
+- Every artifact (the trained model file, SHAP plots, feature importance charts)
+- When it ran, how long it took, and whether it succeeded
+
+### Option A — Local (no Docker, recommended for development)
+
+```bash
+MLFLOW_TRACKING_URI=sqlite:///mlruns.db mlflow ui --port 5000
+```
+
+Open: **http://localhost:5000**
+
+This reads from the same `mlruns.db` SQLite file that the training pipeline writes to.
+No server setup required.
+
+### Option B — Docker
+
+```bash
+docker-compose up -d mlflow
+```
+
+Open: **http://localhost:5000**
+
+### When to open MLflow
+
+- **After every training run** — verify the AUC was recorded correctly
+- **When comparing hyperparameters** — which settings gave the best AUC?
+- **When something breaks** — read the logged parameters and figure out what changed
+- **Before deploying** — confirm the model version you want is in the registry
+
+### What to do after opening http://localhost:5000
+
+**Screen 1 — Experiments list (the home page)**
+
+You will see a table with one row per experiment (ours is called `loan-risk`).
+Click on `loan-risk` to enter it.
+
+**Screen 2 — Runs list**
+
+Each row is one training run. Columns show:
+- `Start Time` — when it ran
+- `val_auc`, `test_auc` — the key metrics to compare
+- `Duration` — how long training took
+
+What to do:
+1. Click the `test_auc` column header to sort — highest AUC run is now at the top
+2. Click any run ID (the blue link) to open the run detail page
+
+**Screen 3 — Run detail page**
+
+This has three tabs:
+
+| Tab | What you see | What to look for |
+|---|---|---|
+| **Overview** | All logged parameters (learning_rate, n_estimators, etc.) | What settings produced this AUC? |
+| **Metrics** | Charts of val_auc, test_auc, threshold over training | Is val close to test? (large gap = overfitting) |
+| **Artifacts** | Model file, SHAP plots, feature importance | Click `feature_importance.png` to see which features matter most |
+
+**Screen 4 — Comparing two runs**
+
+1. Tick the checkbox on 2 or more runs in the runs list
+2. Click the **Compare** button that appears above the table
+3. You see a side-by-side diff of every parameter and metric
+
+This is how you answer "Run A beat Run B — what was different?"
+
+**Screen 5 — Model Registry**
+
+Click **Models** in the top navigation bar.
+You will see `loan-risk-classifier` listed.
+Click it to see all registered versions, which one has the `@champion` alias, and when
+each version was registered.
+
+To manually promote a version here:
+1. Click a version number (e.g. `Version 2`)
+2. Click the pencil icon next to **Aliases**
+3. Type `champion` and save
+
+---
+
+## Prefect — Pipeline Orchestration & Scheduling
+
+### The problem it solves
+
+Without Prefect, you run the pipeline manually:
+```bash
+uv run python scripts/run_pipeline.py --stage all
+```
+
+This is fine once. But real systems need:
+- The pipeline to run **automatically every week** (new data arrives weekly)
+- **Alerts** when it fails — not discovering it a week later
+- **Visibility** into what ran, when, and how long each step took
+- **Retry logic** — if the download fails due to a network blip, retry 3 times before alerting
+
+Prefect handles all of this. It turns your Python functions into observable, schedulable,
+retryable workflows.
+
+### Start Prefect
+
+```bash
+docker-compose up -d prefect
+```
+
+Open: **http://localhost:4200**
+
+### When to open Prefect
+
+- **To schedule the training pipeline** — set it to run every Sunday at 2am automatically
+- **To check if a scheduled run succeeded** — did last night's job work?
+- **When a run failed** — Prefect shows exactly which task failed and why
+- **To manually trigger a run** — without opening a terminal
+
+### What to do after opening http://localhost:4200
+
+**Screen 1 — Dashboard (home page)**
+
+Shows a summary of recent flow runs:
+- Green = succeeded
+- Red = failed
+- Yellow = running
+
+If anything is red, click on it immediately.
+
+**Screen 2 — Flows**
+
+Click **Flows** in the left sidebar.
+A *flow* is a named pipeline (e.g. `weekly-training-flow`, `daily-monitor-flow`).
+Each flow can have multiple *deployments* (different schedules or configurations).
+
+**Screen 3 — Flow Runs**
+
+Click any flow to see its run history. Click a specific run to open the task graph:
+- Each box is one task (download → preprocess → featurize → train → evaluate)
+- Colour tells you: green = done, red = failed, grey = skipped
+- Click a red task to see its full error traceback — no need to dig through terminal logs
+
+**Screen 4 — Creating a schedule**
+
+1. Click **Deployments** in the left sidebar
+2. Find your deployment (e.g. `weekly-training-flow/production`)
+3. Click **Edit**
+4. Under **Schedule**, click **Add schedule**
+5. Choose **Cron** and enter `0 2 * * 0` (every Sunday at 2am)
+6. Click **Save**
+
+The pipeline will now run automatically. You can also click **Quick Run** to trigger it
+immediately without waiting for the schedule.
+
+**Screen 5 — Work Pools**
+
+Prefect uses *work pools* to decide where to run your code (local machine, Docker
+container, Kubernetes pod, etc.). For local development, a `Process` work pool runs
+flows directly on your machine. You need a worker running to actually execute flows:
+
+```bash
+# In a separate terminal — keeps the worker alive
+uv run prefect worker start --pool default-agent-pool
+```
+
+---
+
+## Prometheus — Metrics Collection
+
+### The problem it solves
+
+Your API is running. But:
+- How many predictions per second is it handling?
+- Are any requests taking longer than 2 seconds?
+- Is the model returning 90% REJECT suddenly? (possible data drift)
+- Did the server crash at 3am?
+
+Prometheus answers these questions by **scraping** (pulling) metrics from your API
+every 15 seconds and storing them in a time-series database.
+
+Your FastAPI server already exposes metrics at `GET /metrics`:
+```bash
+curl http://localhost:8000/metrics
+```
+
+Prometheus visits that URL every 15 seconds and records every counter and histogram.
+
+### Start Prometheus
+
+```bash
+docker-compose up -d prometheus
+```
+
+Open: **http://localhost:9090**
+
+### When to open Prometheus
+
+- **For ad-hoc queries** — "how many REJECT predictions in the last hour?"
+- **To debug a Grafana panel** — Prometheus has a query editor to test expressions
+- **To verify metrics are being scraped** — confirm the API is being monitored
+
+### What to do after opening http://localhost:9090
+
+**Screen 1 — Query page (home page)**
+
+There is a text box at the top. This is where you write PromQL queries.
+
+Try these queries one by one — type them in and press **Execute**:
+
+```promql
+# Total predictions made (all time)
+loan_risk_predictions_total
+
+# Predictions broken down by outcome (APPROVE vs REJECT)
+sum by (prediction) (loan_risk_predictions_total)
+
+# Request rate over the last 5 minutes (requests per second)
+rate(loan_risk_predictions_total[5m])
+
+# 99th percentile latency in the last 5 minutes (ms)
+histogram_quantile(0.99, rate(loan_risk_prediction_latency_seconds_bucket[5m])) * 1000
+
+# Is the model loaded? (1 = yes, 0 = no / degraded)
+loan_risk_model_loaded
+```
+
+After clicking **Execute**, switch between:
+- **Table** tab — raw numbers right now
+- **Graph** tab — how the metric changed over time (drag the time range to zoom)
+
+**Screen 2 — Targets (verifying the API is being scraped)**
+
+Click **Status** → **Targets** in the top navigation.
+
+You will see one row per scrape target. Look for `loan_risk_api` with State = `UP`.
+If it shows `DOWN`, your API is not running or Prometheus cannot reach it.
+
+**Screen 3 — Alerts**
+
+Click **Alerts** in the top navigation.
+Alert rules are defined in `infra/prometheus/rules.yml`. Green = no alerts firing.
+Red = something needs your attention.
+
+---
+
+## Grafana — Dashboards & Visualisation
+
+### The problem it solves
+
+Prometheus stores metrics but its UI is designed for engineers writing queries.
+Grafana turns those metrics into **visual dashboards** — charts, gauges, and alerts —
+that anyone can understand at a glance.
+
+Think of Prometheus as the database and Grafana as the BI tool on top of it.
+
+### Start Grafana
+
+```bash
+docker-compose up -d grafana
+```
+
+Open: **http://localhost:3000**
+
+Login: `admin` / `admin` (you will be prompted to change the password — you can skip this
+for local development).
+
+### When to open Grafana
+
+- **For your daily/weekly health check** — open the dashboard and scan for red
+- **When investigating an incident** — zoom into the time window when it happened
+- **To share with non-engineers** — the dashboard is self-explanatory, no PromQL needed
+- **To set up email/Slack alerts** — so you are notified before a problem becomes an outage
+
+### What to do after opening http://localhost:3000
+
+**Step 1 — Add Prometheus as a data source (first time only)**
+
+1. Click the hamburger menu (☰) in the top-left
+2. Go to **Connections** → **Data sources**
+3. Click **Add data source**
+4. Choose **Prometheus**
+5. In the URL field enter: `http://prometheus:9090`
+   (use `prometheus` not `localhost` — this is the Docker service name)
+6. Click **Save & Test** — you should see "Data source is working"
+
+**Step 2 — Import the pre-built dashboard**
+
+A dashboard JSON is included at `infra/grafana/dashboards/loan_risk.json`:
+
+1. Click the hamburger menu (☰)
+2. Go to **Dashboards** → **Import**
+3. Click **Upload dashboard JSON file**
+4. Select `infra/grafana/dashboards/loan_risk.json`
+5. Choose your Prometheus data source
+6. Click **Import**
+
+**Step 3 — Reading the dashboard**
+
+The dashboard has four rows:
+
+| Row | Panels | What to check |
+|---|---|---|
+| **Traffic** | Requests/sec, total predictions | Is the API receiving traffic? |
+| **Latency** | p50 / p95 / p99 response times | Is anything slower than 200ms? |
+| **Model health** | APPROVE vs REJECT rate, probability distribution | Is the rejection rate stable? A sudden spike may mean drift |
+| **System** | Model loaded status, uptime | Is the model currently loaded? |
+
+**Step 4 — Setting a time range**
+
+The default view shows the last 1 hour. Change it with the time picker in the top-right
+corner (e.g. "Last 24 hours", "Last 7 days", or a custom range like "last Sunday 9am–11am").
+
+**Step 5 — Setting up alerts (optional)**
+
+1. Click any panel title → **Edit**
+2. Click the **Alert** tab on the left
+3. Click **Create alert rule from this panel**
+4. Set a condition, e.g.: "if `reject_rate` > 0.70 for 10 minutes, send an alert"
+5. Add a notification channel (email, Slack, PagerDuty) under **Alerting** → **Contact points**
+
+---
+
+### Quick reference — all four tools
+
+| Tool | URL | Start command | Open when... |
+|---|---|---|---|
+| **MLflow** | http://localhost:5000 | `mlflow ui --backend-store-uri sqlite:///mlruns.db` (or Docker) | After training; to compare runs; to manage the model registry |
+| **Prefect** | http://localhost:4200 | `docker-compose up -d prefect` | To schedule pipelines; to check if a scheduled run succeeded; to debug a failed task |
+| **Prometheus** | http://localhost:9090 | `docker-compose up -d prometheus` | To query raw metrics; to verify the API is being scraped; to test PromQL expressions |
+| **Grafana** | http://localhost:3000 | `docker-compose up -d grafana` | For daily health checks; to investigate incidents; to share dashboards with the team |
 
 ---
 
