@@ -325,17 +325,32 @@ You should see a row with tag `latest` and a recent timestamp. If the table is e
 > **Note:** `terraform apply` creates the ECS service immediately, but the Docker
 > image doesn't exist in ECR until the first CI build finishes (Step 8). ECS tasks
 > will fail with `CannotPullContainerError` until the image is pushed. This is
-> expected — run the commands below after Step 8 completes to force ECS to retry.
+> expected — run the commands below after Step 8 completes.
 
-Once the Docker image is in ECR, trigger the ECS deployment:
+> **Important:** The ECS service has `ignore_changes = [task_definition]` in Terraform,
+> which means Terraform will create a new task definition revision but will NOT
+> automatically update the running service to use it. You must do this manually
+> every time Terraform changes the task definition.
+
+Once the Docker image is in ECR, deploy the latest task definition:
 
 ```bash
-# Force ECS to pick up the new image
+# Get the latest task definition revision created by Terraform
+TASK_DEF=$(aws ecs list-task-definitions \
+  --family-prefix loan-risk-serving \
+  --region ap-south-1 \
+  --sort DESC \
+  --query 'taskDefinitionArns[0]' \
+  --output text)
+
+echo "Deploying: $TASK_DEF"
+
+# Update the service to use it
 aws ecs update-service \
   --cluster loan-risk-cluster \
   --service loan-risk-serving \
-  --force-new-deployment \
-  --region ap-south-1
+  --task-definition $TASK_DEF \
+  --region ap-south-1 > /dev/null
 
 # Wait for it to stabilise (2–3 minutes)
 aws ecs wait services-stable \
@@ -394,12 +409,13 @@ curl -X POST http://$ALB_DNS/predict \
     "loan_id": "test-001",
     "annual_income": 75000,
     "loan_amount": 15000,
-    "loan_term": 36,
+    "loan_term_months": 36,
     "loan_purpose": "debt_consolidation",
     "credit_score": 720,
-    "employment_length": 5,
+    "employment_years": 5,
     "home_ownership": "RENT",
-    "debt_to_income": 0.25
+    "debt_to_income_ratio": 0.25,
+    "num_open_accounts": 4
   }'
 ```
 
@@ -515,11 +531,21 @@ aws ecr describe-images \
 
 **Step 9 — Redeploy the serving layer:**
 ```bash
+# Get the latest task definition (Terraform creates a new revision on each apply)
+TASK_DEF=$(aws ecs list-task-definitions \
+  --family-prefix loan-risk-serving \
+  --region ap-south-1 \
+  --sort DESC \
+  --query 'taskDefinitionArns[0]' \
+  --output text)
+
+echo "Deploying: $TASK_DEF"
+
 aws ecs update-service \
   --cluster loan-risk-cluster \
   --service loan-risk-serving \
-  --force-new-deployment \
-  --region ap-south-1
+  --task-definition $TASK_DEF \
+  --region ap-south-1 > /dev/null
 
 aws ecs wait services-stable \
   --cluster loan-risk-cluster \
@@ -588,7 +614,17 @@ The bootstrap script must be run before `terraform init`. Run `./infra/bootstrap
 
 ### ECS tasks are failing to start
 - Check ECS task logs: AWS Console → ECS → Clusters → loan-risk-cluster → Tasks → (task ID) → Logs
-- Common cause: `MLFLOW_TRACKING_URI` secret not set correctly in Secrets Manager
+- Common cause: `MLFLOW__TRACKING_URI` secret not injected — verify Secrets Manager has the `loan-risk/mlflow-config` secret with key `MLFLOW_TRACKING_URI` set to the RDS PostgreSQL URI
+
+### ECS service is running but model is not loaded (`"Model not loaded"` response)
+- The service may be using a stale task definition revision. Run:
+  ```bash
+  TASK_DEF=$(aws ecs list-task-definitions --family-prefix loan-risk-serving \
+    --region ap-south-1 --sort DESC --query 'taskDefinitionArns[0]' --output text)
+  aws ecs update-service --cluster loan-risk-cluster --service loan-risk-serving \
+    --task-definition $TASK_DEF --region ap-south-1
+  ```
+- The `ignore_changes = [task_definition]` lifecycle rule means Terraform never auto-updates the running service — you must run the above after every `terraform apply`
 
 ### SageMaker pipeline step fails
 - Go to SageMaker → Pipelines → loan-risk-training-pipeline → (execution) → (failed step)

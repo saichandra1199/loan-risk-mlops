@@ -1,5 +1,5 @@
 mlflow:
-  tracking_uri: "${MLFLOW_TRACKING_URI:-sqlite:///mlruns.db}"  # env override for AWS RDS
+  tracking_uri: "sqlite:///mlruns.db"  # overridden by MLFLOW__TRACKING_URI env var in AWS
   experiment_name: "loan-risk"
   registered_model_name: "loan-risk-classifier"
 

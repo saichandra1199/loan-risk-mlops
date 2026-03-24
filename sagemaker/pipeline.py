@@ -308,7 +308,15 @@ def build_pipeline(pipeline_session: PipelineSession | None = None) -> Pipeline:
         approval_status="Approved",
         model_metrics=sagemaker.model_metrics.ModelMetrics(
             model_statistics=sagemaker.model_metrics.MetricsSource(
-                s3_uri=f"{evaluate_step.properties.ProcessingOutputConfig.Outputs['evaluation'].S3Output.S3Uri}/evaluation_report.json",
+                s3_uri=sagemaker.workflow.functions.Join(
+                    on="",
+                    values=[
+                        evaluate_step.properties.ProcessingOutputConfig.Outputs[
+                            "evaluation"
+                        ].S3Output.S3Uri,
+                        "/evaluation_report.json",
+                    ],
+                ),
                 content_type="application/json",
             )
         ),
@@ -352,6 +360,9 @@ def main() -> None:
     parser.add_argument("--skip-tuning", action="store_true", default=True, help="Skip HPO")
     parser.add_argument("--n-trials", type=int, default=50, help="HPO trial count")
     args = parser.parse_args()
+
+    if args.dry_run and not os.environ.get("SAGEMAKER_ROLE_ARN"):
+        os.environ["SAGEMAKER_ROLE_ARN"] = "arn:aws:iam::000000000000:role/dry-run-role"
 
     pipeline = build_pipeline()
 

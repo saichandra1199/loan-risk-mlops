@@ -41,7 +41,7 @@ resource "aws_ecs_task_definition" "serving" {
     ]
 
     secrets = [{
-      name      = "MLFLOW_TRACKING_URI"
+      name      = "MLFLOW__TRACKING_URI"
       valueFrom = "${var.mlflow_secret_arn}:MLFLOW_TRACKING_URI::"
     }]
 

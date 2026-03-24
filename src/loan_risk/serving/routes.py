@@ -6,7 +6,7 @@ import time
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from fastapi.responses import JSONResponse
 
 from loan_risk.exceptions import ModelNotFoundError, PredictionError
 from loan_risk.logging_setup import get_logger
@@ -79,17 +79,12 @@ async def health(predictor: ModelPredictor = Depends(get_predictor)) -> HealthRe
 
 @router.get(
     "/metrics",
-    summary="Prometheus metrics",
+    summary="In-process metrics",
     tags=["Operations"],
-    response_class=None,
 )
-async def metrics():
-    """Expose Prometheus metrics for scraping."""
-    from fastapi.responses import Response as FastAPIResponse
-    return FastAPIResponse(
-        content=generate_latest(),
-        media_type=CONTENT_TYPE_LATEST,
-    )
+async def metrics(predictor: ModelPredictor = Depends(get_predictor)) -> JSONResponse:
+    """Return in-process counters. CloudWatch is the primary metrics sink."""
+    return JSONResponse({"model_loaded": predictor.is_ready})
 
 
 @router.get(
