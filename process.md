@@ -481,10 +481,9 @@ terraform destroy -var="db_password=MyDbPass123" -parallelism=20
 > `-parallelism=20` doubles concurrent deletions (default is 10). RDS deletion itself
 > takes ~5 min regardless — that is an AWS minimum, not something Terraform can speed up.
 
-> **If destroy fails on S3 buckets** — that means a bucket has data in it (DVC cache,
-> MLflow artifacts, etc.). That is fine. S3 costs less than $0.10/month for small
-> amounts of data. The expensive resources (RDS, ECS, NAT Gateways, ALB) are still
-> destroyed. Your data is safe and will be there when you resume.
+> **If destroy fails on S3 buckets** — that means a bucket has data in it. That is fine.
+> S3 costs less than $0.10/month for small amounts of data. The expensive resources
+> (RDS, ECS, NAT Gateways, ALB) are still destroyed. Your data is safe.
 
 After destroy, you are paying **nothing** except a few cents for any S3 data that remains.
 
@@ -492,11 +491,11 @@ After destroy, you are paying **nothing** except a few cents for any S3 data tha
 
 | Resource | Preserved? | Why |
 |----------|-----------|-----|
-| S3 buckets + data | ✅ Yes | Terraform won't delete non-empty buckets — your data is safe |
+| S3 buckets + data | ✅ Yes | Terraform won't delete non-empty buckets |
 | Terraform state bucket | ✅ Yes | Created by bootstrap, not managed by `terraform destroy` |
-| GitHub secrets & variables | ✅ Yes | Stored in GitHub, nothing to do |
+| GitHub secrets & variables | ✅ Yes | Stored in GitHub |
 | AWS CLI config | ✅ Yes | On your machine |
-| RDS database | ❌ Destroyed | Recreated on next apply (MLflow schema is rebuilt automatically) |
+| RDS database | ❌ Destroyed | Recreated on next apply |
 | ECS cluster & tasks | ❌ Destroyed | Recreated on next apply |
 | ECR Docker images | ❌ Destroyed | Rebuilt automatically by CI on next push |
 | VPC, NAT Gateways, ALB | ❌ Destroyed | Recreated on next apply |
@@ -519,7 +518,7 @@ terraform apply -var="db_password=MyDbPass123"
 git push origin aws   # triggers CI which pushes the image to ECR
 
 # Watch progress
-gh run watch --repo <your-github-username>/loan-risk-mlops
+gh run watch --repo saichandra1199/loan-risk-mlops
 
 # Verify image is in ECR
 aws ecr describe-images \
@@ -560,25 +559,165 @@ echo "Back online!"
 
 ---
 
-## Tearing Down (Save Money)
+## Full Teardown — Stop All AWS Costs Permanently
 
-When you are not using the infrastructure, destroy it to stop paying:
+Follow this if you want to shut down the project completely and stop all AWS charges.
+After these steps, your AWS account will have no running resources and no ongoing costs.
+
+> This is **irreversible for data**. S3 buckets with model artifacts and MLflow data
+> will be deleted permanently. Only do this if you are done with the project.
+
+### Step 1 — Destroy all Terraform-managed resources
 
 ```bash
 cd infra/terraform
 terraform destroy -var="db_password=MyDbPass123" -parallelism=20
-# Type 'yes' when prompted
+# Type 'yes' when prompted — takes ~8–10 minutes
 ```
 
-To bring it back:
+### Step 2 — Delete S3 buckets (Terraform leaves these behind if they have data)
+
 ```bash
-terraform apply -var="db_password=MyDbPass123"
-# Then re-push the Docker image and re-upsert the SageMaker pipeline
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+
+for BUCKET in \
+  "loan-risk-data-${ACCOUNT_ID}" \
+  "loan-risk-artifacts-${ACCOUNT_ID}" \
+  "loan-risk-mlflow-${ACCOUNT_ID}"; do
+  echo "Deleting $BUCKET ..."
+  # Delete all object versions (required for versioned buckets)
+  aws s3api delete-objects \
+    --bucket "$BUCKET" \
+    --delete "$(aws s3api list-object-versions \
+      --bucket "$BUCKET" \
+      --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}}' \
+      --output json 2>/dev/null)" \
+    --region ap-south-1 2>/dev/null || true
+  # Delete any remaining delete markers
+  aws s3api delete-objects \
+    --bucket "$BUCKET" \
+    --delete "$(aws s3api list-object-versions \
+      --bucket "$BUCKET" \
+      --query '{Objects: DeleteMarkers[].{Key:Key,VersionId:VersionId}}' \
+      --output json 2>/dev/null)" \
+    --region ap-south-1 2>/dev/null || true
+  # Now delete the bucket
+  aws s3 rb s3://"$BUCKET" --force --region ap-south-1 2>/dev/null \
+    && echo "  Deleted ✓" || echo "  Already gone or skipped"
+done
 ```
 
-> The S3 buckets and MLflow data are preserved after destroy.
-> ECR images are force-deleted (`force_delete = true` in the ECR module) — the CI
-> pipeline rebuilds them automatically on the next `git push`.
+### Step 3 — Delete the Terraform state bucket
+
+```bash
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+TF_BUCKET="loan-risk-tf-state-${ACCOUNT_ID}"
+
+echo "Deleting Terraform state bucket: $TF_BUCKET"
+aws s3 rb s3://"$TF_BUCKET" --force --region ap-south-1
+echo "Deleted ✓"
+```
+
+### Step 4 — Delete the Terraform state lock table (DynamoDB)
+
+```bash
+aws dynamodb delete-table \
+  --table-name loan-risk-tf-locks \
+  --region ap-south-1
+echo "DynamoDB lock table deleted ✓"
+```
+
+### Step 5 — Delete the GitHub Actions IAM role and OIDC provider
+
+```bash
+# Detach policy from role
+aws iam detach-role-policy \
+  --role-name loan-risk-github-actions-role \
+  --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+
+# Delete the role
+aws iam delete-role --role-name loan-risk-github-actions-role
+echo "IAM role deleted ✓"
+
+# Delete the GitHub OIDC provider
+OIDC_ARN=$(aws iam list-open-id-connect-providers \
+  --query "OpenIDConnectProviderList[?ends_with(Arn,'token.actions.githubusercontent.com')].Arn" \
+  --output text)
+
+if [ -n "$OIDC_ARN" ]; then
+  aws iam delete-open-id-connect-provider --open-id-connect-provider-arn "$OIDC_ARN"
+  echo "OIDC provider deleted ✓"
+fi
+```
+
+### Step 6 — Delete the IAM admin user (optional)
+
+Only do this if you created the `loan-risk-admin` user solely for this project and no longer need it.
+
+```bash
+# Delete access keys first
+for KEY_ID in $(aws iam list-access-keys --user-name loan-risk-admin \
+  --query 'AccessKeyMetadata[*].AccessKeyId' --output text); do
+  aws iam delete-access-key --user-name loan-risk-admin --access-key-id "$KEY_ID"
+done
+
+# Detach policies
+aws iam detach-user-policy \
+  --user-name loan-risk-admin \
+  --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+
+# Delete the user
+aws iam delete-user --user-name loan-risk-admin
+echo "IAM user deleted ✓"
+```
+
+### Step 7 — Verify nothing is running
+
+```bash
+# Should return empty lists for all of these
+echo "=== Checking for remaining resources ==="
+
+echo "ECS clusters:"
+aws ecs list-clusters --region ap-south-1 --query 'clusterArns' --output text
+
+echo "RDS instances:"
+aws rds describe-db-instances --region ap-south-1 \
+  --query 'DBInstances[*].DBInstanceIdentifier' --output text
+
+echo "Load balancers:"
+aws elbv2 describe-load-balancers --region ap-south-1 \
+  --query 'LoadBalancers[*].LoadBalancerName' --output text
+
+echo "NAT Gateways:"
+aws ec2 describe-nat-gateways --region ap-south-1 \
+  --filter Name=state,Values=available \
+  --query 'NatGateways[*].NatGatewayId' --output text
+
+echo "S3 buckets:"
+aws s3 ls | grep loan-risk || echo "None"
+```
+
+All lists should be empty. If anything remains, check the AWS Console → **Billing → Cost Explorer** to confirm $0 projected cost.
+
+### What is now deleted
+
+| Resource | Deleted? |
+|---|---|
+| ECS cluster, tasks, service | ✅ |
+| RDS PostgreSQL database | ✅ |
+| VPC, subnets, NAT Gateways, ALB | ✅ |
+| ECR repository and images | ✅ |
+| SageMaker model package group | ✅ |
+| CloudWatch dashboards, alarms, log groups | ✅ |
+| Secrets Manager entries | ✅ |
+| SNS topic | ✅ |
+| EventBridge schedules | ✅ |
+| S3 buckets and all data | ✅ |
+| Terraform state bucket and lock table | ✅ |
+| GitHub Actions IAM role and OIDC provider | ✅ |
+| IAM admin user (if Step 6 was run) | ✅ |
+
+Your AWS account is now clean with **zero ongoing costs**.
 
 ---
 
@@ -626,7 +765,27 @@ The bootstrap script must be run before `terraform init`. Run `./infra/bootstrap
   ```
 - The `ignore_changes = [task_definition]` lifecycle rule means Terraform never auto-updates the running service — you must run the above after every `terraform apply`
 
-### SageMaker pipeline step fails
+### SageMaker pipeline fails with "service limit 0 Instances"
+Your account needs quota increases before the first run. Request all three at once:
+```bash
+# ml.m5.large for processing jobs (DownloadStep, PreprocessStep, etc.)
+aws service-quotas request-service-quota-increase \
+  --service-code sagemaker --quota-code L-8541302D \
+  --desired-value 2 --region ap-south-1
+
+# ml.m5.xlarge for processing jobs (FeaturizeStep, EvaluateStep)
+aws service-quotas request-service-quota-increase \
+  --service-code sagemaker --quota-code L-0307F515 \
+  --desired-value 2 --region ap-south-1
+
+# ml.m5.xlarge for training jobs (TrainStep)
+aws service-quotas request-service-quota-increase \
+  --service-code sagemaker --quota-code L-CCE2AFA6 \
+  --desired-value 2 --region ap-south-1
+```
+Wait for approval email (usually minutes, up to 24 hours), then re-run the pipeline.
+
+### SageMaker pipeline step fails for another reason
 - Go to SageMaker → Pipelines → loan-risk-training-pipeline → (execution) → (failed step)
 - Click "View logs" to see the CloudWatch log output
 
