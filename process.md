@@ -359,6 +359,14 @@ aws ecs wait services-stable \
   --region ap-south-1
 
 echo "ECS service is running!"
+
+# If any quota change is done, Then run this
+
+ aws service-quotas  list-requested-service-quota-change-history \
+    --service-code sagemaker \
+    --region ap-south-1 \
+    --query 'RequestedQuotas[*].{name:QuotaName,status:Status}' \
+    --output table
 ```
 
 ---
