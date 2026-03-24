@@ -251,11 +251,11 @@ cd infra/terraform
 terraform init
 
 # Preview what will be created (no changes made yet)
-terraform plan -var="db_password=MyDbPass123"
+terraform plan -var="db_password=MLopsClaude1"
 # Replace MyDbPass123 with the password you chose in Step 6
 
 # Create all resources (takes 10–15 minutes)
-terraform apply -var="db_password=MyDbPass123"
+terraform apply -var="db_password=MLopsClaude1"
 ```
 
 When prompted `Do you want to perform these actions?` — type `yes` and press Enter.
@@ -473,7 +473,7 @@ You can also trigger manually from GitHub Actions → **Training Pipeline (SageM
 
 ```bash
 cd infra/terraform
-terraform destroy -var="db_password=MyDbPass123" -parallelism=20
+terraform destroy -var="db_password=MLopsClaude1" -parallelism=20
 # When prompted: type 'yes' and press Enter
 # Takes ~8–10 minutes
 ```
@@ -509,7 +509,7 @@ Steps 1–6 are already done. Skip them entirely. Pick up from Step 7:
 **Step 7 — Recreate infrastructure:**
 ```bash
 cd infra/terraform
-terraform apply -var="db_password=MyDbPass123"
+terraform apply -var="db_password=MLopsClaude1"
 # Takes 10–15 minutes — type 'yes' when prompted
 ```
 
@@ -571,7 +571,7 @@ After these steps, your AWS account will have no running resources and no ongoin
 
 ```bash
 cd infra/terraform
-terraform destroy -var="db_password=MyDbPass123" -parallelism=20
+terraform destroy -var="db_password=MLopsClaude1" -parallelism=20
 # Type 'yes' when prompted — takes ~8–10 minutes
 ```
 
