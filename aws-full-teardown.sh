@@ -111,6 +111,9 @@ echo "Buckets emptied — proceeding with terraform destroy"
 echo ""
 
 cd "$TF_DIR"
+echo "Running terraform init ..."
+terraform init -input=false > /dev/null
+echo ""
 terraform destroy -var="db_password=${DB_PASSWORD}" -parallelism=20 -auto-approve
 echo "Terraform destroy complete ✓"
 cd "$SCRIPT_DIR"

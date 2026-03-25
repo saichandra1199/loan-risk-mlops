@@ -72,6 +72,9 @@ echo ""
 
 DESTROY_EXIT=0
 cd "$TF_DIR"
+echo "Running terraform init ..."
+terraform init -input=false > /dev/null
+echo ""
 terraform destroy \
   -var="db_password=${DB_PASSWORD}" \
   -parallelism=20 \
