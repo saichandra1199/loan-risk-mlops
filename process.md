@@ -479,19 +479,34 @@ You can also trigger manually from GitHub Actions → **Training Pipeline (SageM
 
 ### Stop Everything (run this now)
 
+Use the `aws-temp-stop.sh` script at the project root — it runs `terraform destroy`,
+handles the expected S3 bucket errors gracefully, and prints a verification summary
+at the end.
+
 ```bash
-cd infra/terraform
-terraform destroy -var="db_password=MLopsClaude1" -parallelism=20
-# When prompted: type 'yes' and press Enter
-# Takes ~8–10 minutes
+./aws-temp-stop.sh
+# Prompts for confirmation and your database password, then runs terraform destroy.
+# Takes ~8–10 minutes.
 ```
+
+**What the script destroys vs. preserves:**
+
+| Resource | Outcome |
+|----------|---------|
+| RDS, ECS cluster & tasks | ❌ Destroyed |
+| VPC, NAT Gateways, ALB | ❌ Destroyed |
+| ECR repository and images | ❌ Destroyed |
+| SageMaker model group, EventBridge schedules | ❌ Destroyed |
+| S3 buckets + data | ✅ Preserved (Terraform won't delete non-empty buckets) |
+| Terraform state bucket | ✅ Preserved |
+| GitHub secrets & variables | ✅ Preserved |
+
+> **S3 BucketNotEmpty errors are expected and harmless.** Terraform leaves non-empty
+> buckets so your model artifacts and MLflow data survive. The script explicitly
+> handles this and will not abort on those errors.
 
 > `-parallelism=20` doubles concurrent deletions (default is 10). RDS deletion itself
 > takes ~5 min regardless — that is an AWS minimum, not something Terraform can speed up.
-
-> **If destroy fails on S3 buckets** — that means a bucket has data in it. That is fine.
-> S3 costs less than $0.10/month for small amounts of data. The expensive resources
-> (RDS, ECS, NAT Gateways, ALB) are still destroyed. Your data is safe.
 
 After destroy, you are paying **nothing** except a few cents for any S3 data that remains.
 
