@@ -60,12 +60,63 @@ fi
 
 read -rp "Enter the database password used during terraform apply: " DB_PASSWORD
 
+# ── Step 1a — Empty S3 buckets BEFORE terraform destroy ───────────────────────
+# Terraform cannot delete non-empty versioned buckets; empty them first so
+# terraform destroy succeeds in one pass.
+echo ""
+echo "Pre-emptying S3 buckets so terraform destroy can delete them ..."
+
+empty_bucket() {
+  local BUCKET="$1"
+  # Check the bucket exists first
+  aws s3api head-bucket --bucket "$BUCKET" --region "$REGION" 2>/dev/null || return 0
+
+  echo "  Emptying $BUCKET ..."
+
+  # Delete all versioned objects (paginate until none remain)
+  while true; do
+    VERSIONS=$(aws s3api list-object-versions \
+      --bucket "$BUCKET" \
+      --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}}' \
+      --max-items 1000 \
+      --output json 2>/dev/null)
+    [[ $(echo "$VERSIONS" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('Objects') or []))") -eq 0 ]] && break
+    aws s3api delete-objects --bucket "$BUCKET" --delete "$VERSIONS" \
+      --region "$REGION" > /dev/null 2>&1 || true
+  done
+
+  # Delete all delete markers
+  while true; do
+    MARKERS=$(aws s3api list-object-versions \
+      --bucket "$BUCKET" \
+      --query '{Objects: DeleteMarkers[].{Key:Key,VersionId:VersionId}}' \
+      --max-items 1000 \
+      --output json 2>/dev/null)
+    [[ $(echo "$MARKERS" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('Objects') or []))") -eq 0 ]] && break
+    aws s3api delete-objects --bucket "$BUCKET" --delete "$MARKERS" \
+      --region "$REGION" > /dev/null 2>&1 || true
+  done
+
+  # Remove any remaining objects (non-versioned)
+  aws s3 rm "s3://${BUCKET}" --recursive --region "$REGION" 2>/dev/null || true
+  echo "  $BUCKET emptied ✓"
+}
+
+for BUCKET in \
+  "loan-risk-data-${ACCOUNT_ID}" \
+  "loan-risk-artifacts-${ACCOUNT_ID}" \
+  "loan-risk-mlflow-${ACCOUNT_ID}"; do
+  empty_bucket "$BUCKET"
+done
+echo "Buckets emptied — proceeding with terraform destroy"
+echo ""
+
 cd "$TF_DIR"
 terraform destroy -var="db_password=${DB_PASSWORD}" -parallelism=20 -auto-approve
 echo "Terraform destroy complete ✓"
 cd "$SCRIPT_DIR"
 
-# ── Step 2 — Delete data S3 buckets ────────────────────────────────────────────
+# ── Step 2 — Delete data S3 buckets (now empty, just remove the shells) ────────
 echo ""
 echo "================================================================"
 echo "  Step 2 — Delete S3 data/artifact buckets"
@@ -77,33 +128,6 @@ for BUCKET in \
   "loan-risk-mlflow-${ACCOUNT_ID}"; do
 
   echo "Deleting bucket: $BUCKET"
-
-  # Delete all versioned objects
-  VERSIONS=$(aws s3api list-object-versions \
-    --bucket "$BUCKET" \
-    --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}}' \
-    --output json 2>/dev/null || echo "null")
-
-  if [[ "$VERSIONS" != "null" && "$VERSIONS" != '{"Objects": null}' && "$VERSIONS" != '{"Objects": []}' ]]; then
-    aws s3api delete-objects \
-      --bucket "$BUCKET" \
-      --delete "$VERSIONS" \
-      --region "$REGION" 2>/dev/null || true
-  fi
-
-  # Delete all delete markers
-  MARKERS=$(aws s3api list-object-versions \
-    --bucket "$BUCKET" \
-    --query '{Objects: DeleteMarkers[].{Key:Key,VersionId:VersionId}}' \
-    --output json 2>/dev/null || echo "null")
-
-  if [[ "$MARKERS" != "null" && "$MARKERS" != '{"Objects": null}' && "$MARKERS" != '{"Objects": []}' ]]; then
-    aws s3api delete-objects \
-      --bucket "$BUCKET" \
-      --delete "$MARKERS" \
-      --region "$REGION" 2>/dev/null || true
-  fi
-
   aws s3 rb "s3://${BUCKET}" --force --region "$REGION" 2>/dev/null \
     && echo "  Deleted ✓" || echo "  Already gone or skipped"
 done
