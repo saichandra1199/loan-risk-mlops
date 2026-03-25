@@ -575,6 +575,41 @@ After these steps, your AWS account will have no running resources and no ongoin
 > This is **irreversible for data**. S3 buckets with model artifacts and MLflow data
 > will be deleted permanently. Only do this if you are done with the project.
 
+### Use the teardown script (recommended)
+
+Instead of running the steps below manually, use the `aws-full-teardown.sh` script at the
+project root — it runs all 7 steps in order, handles errors gracefully, and confirms with
+you before doing anything destructive.
+
+```bash
+# From the project root
+
+# Standard teardown — keeps the loan-risk-admin IAM user
+./aws-full-teardown.sh
+
+# Full teardown — also deletes the loan-risk-admin IAM user
+./aws-full-teardown.sh --delete-iam-user
+```
+
+**What the script does (in order):**
+
+| Step | Action |
+|------|--------|
+| 1 | `terraform destroy` — destroys all Terraform-managed resources (ECS, RDS, VPC, ALB, ECR, etc.) |
+| 2 | Empties and deletes the 3 data S3 buckets (`loan-risk-data-*`, `loan-risk-artifacts-*`, `loan-risk-mlflow-*`) including versioned objects |
+| 3 | Deletes the Terraform state S3 bucket |
+| 4 | Deletes the DynamoDB state lock table |
+| 5 | Detaches policy and deletes the GitHub Actions IAM role + OIDC provider |
+| 6 | *(only with `--delete-iam-user`)* Deletes the `loan-risk-admin` IAM user and its access keys |
+| 7 | Prints a verification summary — all lists should be empty |
+
+The script will prompt you to confirm before starting and will ask for your database
+password before running `terraform destroy`. No credentials are hardcoded.
+
+---
+
+The manual steps below are kept for reference. **You do not need to run them if you used the script.**
+
 ### Step 1 — Destroy all Terraform-managed resources
 
 ```bash
