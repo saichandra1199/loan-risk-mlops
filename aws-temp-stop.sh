@@ -11,7 +11,7 @@
 # Usage:
 #   ./aws-temp-stop.sh
 
-set -uo pipefail   # note: no -e so S3 bucket errors don't abort the script
+set -o pipefail   # no -e and no -u: we handle errors explicitly where needed
 
 REGION="ap-south-1"
 
@@ -53,10 +53,24 @@ echo ""
 
 echo "================================================================"
 echo "  Running terraform destroy ..."
-echo "  (S3 BucketNotEmpty errors below are expected — not a problem)"
 echo "================================================================"
 echo ""
+echo "  *** IMPORTANT — READ BEFORE TERRAFORM OUTPUT APPEARS ***"
+echo ""
+echo "  You WILL see errors like:"
+echo "    Error: BucketNotEmpty: The bucket you tried to delete is not empty"
+echo ""
+echo "  This is EXPECTED and HARMLESS for a temporary stop."
+echo "  Terraform leaves non-empty S3 buckets intact — your model"
+echo "  artifacts and MLflow data are preserved for when you resume."
+echo "  All the expensive resources (RDS, ECS, NAT Gateways, ALB)"
+echo "  are still destroyed successfully."
+echo ""
+echo "  Starting in 5 seconds ..."
+sleep 5
+echo ""
 
+DESTROY_EXIT=0
 cd "$TF_DIR"
 terraform destroy \
   -var="db_password=${DB_PASSWORD}" \
@@ -65,10 +79,13 @@ terraform destroy \
 cd "$SCRIPT_DIR"
 
 echo ""
-if [[ "${DESTROY_EXIT:-0}" -ne 0 ]]; then
-  echo "NOTE: terraform destroy finished with errors (exit code ${DESTROY_EXIT})."
-  echo "      If the only errors are S3 BucketNotEmpty — that is expected."
-  echo "      Your data is safe. The expensive resources are still destroyed."
+if [[ "$DESTROY_EXIT" -ne 0 ]]; then
+  echo "================================================================"
+  echo "  terraform destroy exited with code $DESTROY_EXIT."
+  echo "  If the only failures above are S3 BucketNotEmpty errors,"
+  echo "  everything is fine — your data is safe and the expensive"
+  echo "  resources (RDS, ECS, ALB, NAT Gateways) are destroyed."
+  echo "================================================================"
   echo ""
 fi
 
@@ -78,28 +95,36 @@ echo "  Verifying expensive resources are destroyed"
 echo "================================================================"
 
 echo ""
-echo "ECS clusters (should be empty):"
-aws ecs list-clusters --region "$REGION" --query 'clusterArns' --output text \
-  && echo "" || echo "  (none)"
+check() {
+  local LABEL="$1"; shift
+  local OUT
+  OUT=$("$@" 2>/dev/null) || true
+  if [[ -z "$OUT" || "$OUT" == "None" ]]; then
+    echo "$LABEL (none — good)"
+  else
+    echo "$LABEL"
+    echo "  $OUT"
+  fi
+}
 
-echo "RDS instances (should be empty):"
-aws rds describe-db-instances --region "$REGION" \
-  --query 'DBInstances[*].DBInstanceIdentifier' --output text \
-  && echo "" || echo "  (none)"
+check "ECS clusters:" \
+  aws ecs list-clusters --region "$REGION" --query 'clusterArns' --output text
 
-echo "Load balancers (should be empty):"
-aws elbv2 describe-load-balancers --region "$REGION" \
-  --query 'LoadBalancers[*].LoadBalancerName' --output text \
-  && echo "" || echo "  (none)"
+check "RDS instances:" \
+  aws rds describe-db-instances --region "$REGION" \
+    --query 'DBInstances[*].DBInstanceIdentifier' --output text
 
-echo "NAT Gateways (should be empty):"
-aws ec2 describe-nat-gateways --region "$REGION" \
-  --filter Name=state,Values=available \
-  --query 'NatGateways[*].NatGatewayId' --output text \
-  && echo "" || echo "  (none)"
+check "Load balancers:" \
+  aws elbv2 describe-load-balancers --region "$REGION" \
+    --query 'LoadBalancers[*].LoadBalancerName' --output text
 
-echo "S3 buckets (these are intentionally preserved):"
-aws s3 ls | grep loan-risk || echo "  (none)"
+check "NAT Gateways:" \
+  aws ec2 describe-nat-gateways --region "$REGION" \
+    --filter Name=state,Values=available \
+    --query 'NatGateways[*].NatGatewayId' --output text
+
+echo "S3 buckets (intentionally preserved):"
+aws s3 ls 2>/dev/null | grep loan-risk || echo "  (none)"
 
 echo ""
 echo "================================================================"

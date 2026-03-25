@@ -68,36 +68,35 @@ echo "Pre-emptying S3 buckets so terraform destroy can delete them ..."
 
 empty_bucket() {
   local BUCKET="$1"
-  # Check the bucket exists first
-  aws s3api head-bucket --bucket "$BUCKET" --region "$REGION" 2>/dev/null || return 0
+  if ! aws s3api head-bucket --bucket "$BUCKET" --region "$REGION" 2>/dev/null; then
+    return 0
+  fi
 
   echo "  Emptying $BUCKET ..."
 
-  # Delete all versioned objects (paginate until none remain)
-  while true; do
-    VERSIONS=$(aws s3api list-object-versions \
-      --bucket "$BUCKET" \
-      --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}}' \
-      --max-items 1000 \
-      --output json 2>/dev/null)
-    [[ $(echo "$VERSIONS" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('Objects') or []))") -eq 0 ]] && break
-    aws s3api delete-objects --bucket "$BUCKET" --delete "$VERSIONS" \
-      --region "$REGION" > /dev/null 2>&1 || true
-  done
+  # Use boto3 via uv: proper paginated deletion of all versions + delete markers.
+  # The AWS CLI approach with --max-items and set -e is fragile; boto3 is reliable.
+  (cd "$SCRIPT_DIR" && uv run python3 - <<PYEOF
+import boto3, sys
+s3 = boto3.client("s3", region_name="$REGION")
+bucket = "$BUCKET"
+paginator = s3.get_paginator("list_object_versions")
+to_delete = []
+for page in paginator.paginate(Bucket=bucket):
+    for v in page.get("Versions", []):
+        to_delete.append({"Key": v["Key"], "VersionId": v["VersionId"]})
+    for m in page.get("DeleteMarkers", []):
+        to_delete.append({"Key": m["Key"], "VersionId": m["VersionId"]})
+if not to_delete:
+    print("    Nothing versioned to delete")
+    sys.exit(0)
+for i in range(0, len(to_delete), 1000):
+    s3.delete_objects(Bucket=bucket, Delete={"Objects": to_delete[i:i+1000], "Quiet": True})
+print(f"    Deleted {len(to_delete)} version(s)/marker(s)")
+PYEOF
+  )
 
-  # Delete all delete markers
-  while true; do
-    MARKERS=$(aws s3api list-object-versions \
-      --bucket "$BUCKET" \
-      --query '{Objects: DeleteMarkers[].{Key:Key,VersionId:VersionId}}' \
-      --max-items 1000 \
-      --output json 2>/dev/null)
-    [[ $(echo "$MARKERS" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('Objects') or []))") -eq 0 ]] && break
-    aws s3api delete-objects --bucket "$BUCKET" --delete "$MARKERS" \
-      --region "$REGION" > /dev/null 2>&1 || true
-  done
-
-  # Remove any remaining objects (non-versioned)
+  # Also wipe any remaining unversioned objects
   aws s3 rm "s3://${BUCKET}" --recursive --region "$REGION" 2>/dev/null || true
   echo "  $BUCKET emptied ✓"
 }
