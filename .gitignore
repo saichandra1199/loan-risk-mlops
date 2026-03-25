@@ -68,3 +68,15 @@ Thumbs.db
 
 # Optuna
 optuna.db
+
+# Terraform — provider binaries and local state (never commit these)
+infra/terraform/.terraform/
+infra/terraform/.terraform.lock.hcl
+infra/terraform/terraform.tfstate
+infra/terraform/terraform.tfstate.backup
+
+# MLflow SQLite (local dev only)
+mlruns.db
+
+# MCP local config (machine-specific)
+.mcp.json
